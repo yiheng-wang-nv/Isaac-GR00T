@@ -218,6 +218,10 @@ class So100DataConfig(BaseDataConfig):
         return ComposedModalityTransform(transforms=transforms)
 
 
+class So101WristDataConfig(So100DataConfig):
+    video_keys = ["video.wrist"]
+
+
 ###########################################################################################
 
 
@@ -682,4 +686,5 @@ DATA_CONFIG_MAP = {
     "bimanual_panda_hand": BimanualPandaHandDataConfig(),
     "single_panda_gripper": SinglePandaGripperDataConfig(),
     "so100": So100DataConfig(),
+    "so101_wrist": So101WristDataConfig(),
 }
