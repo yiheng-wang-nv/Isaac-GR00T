@@ -8,17 +8,20 @@ This script connects to a GR00T inference server and runs policy evaluation on S
 Usage:
     # Start GR00T server first:
     python scripts/inference_service.py --server \
-        --model_path <YOUR_CHECKPOINT> \
+        --model_path /localhome/local-vennw/code/Isaac-GR00T/so101_wrist_finetune/checkpoint-10000 \
         --embodiment_tag new_embodiment \
         --data_config so101_wrist \
+        --host 0.0.0.0 \
+        --port 5555 \
         --denoising_steps 4
 
     # Then run this client:
-    python lerobot/scripts/eval_gr00t_so101.py \
-        --host localhost \
+    ssh -L 5555:localhost:5555 local-vennw@10.176.195.216
+    python eval_gr00t_so101.py \
+        --host 127.0.0.1 \
         --port 5555 \
         --camera_index 0 \
-        --port_follower /dev/ttyACM1 \
+        --port_follower /dev/ttyACM0 \
         --task_description "Grip a straight scissor and put it in the box." \
         --actions_to_execute 300
 """
