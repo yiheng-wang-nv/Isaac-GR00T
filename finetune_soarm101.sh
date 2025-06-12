@@ -20,14 +20,28 @@ python scripts/gr00t_finetune.py \
    --base_model_path /localhome/local-vennw/code/Isaac-GR00T/so101_scissors_2_cameras_finetune/checkpoint-8000 \
    --video-backend torchvision_av
 
-# check finetune
-python scripts/eval_policy.py --plot \
-   --embodiment_tag new_embodiment \
-   --model_path so101_scissors_2_cameras_fps15_finetune/checkpoint-8000 \
-   --data_config so100_dualcam \
-  --dataset_path /home/venn/.cache/huggingface/lerobot/Venn/so101_scissors_2_cameras/ \
-   --video_backend torchvision_av \
-   --modality_keys single_arm gripper
+# check finetune for checkpoint-3000 to 10000
+for i in {3000..10000..1000}; do
+   python scripts/eval_policy.py --plot \
+      --embodiment_tag new_embodiment \
+      --model_path so101_scissors_2_cameras_fps15_finetune/checkpoint-${i} \
+      --data_config so100_dualcam \
+      --dataset_path finetune_data/so101_scissors_2_cameras_fps15 \
+      --video_backend torchvision_av \
+      --modality_keys single_arm gripper
+   echo "Finished checkpoint-${i}"
+done
+
+for i in {1000..8000..1000}; do
+   python scripts/eval_policy.py --plot \
+      --embodiment_tag new_embodiment \
+      --model_path so101_scissors_2_cameras_finetune/checkpoint-${i} \
+      --data_config so100_dualcam \
+      --dataset_path finetune_data/so101_scissors_2_cameras \
+      --video_backend torchvision_av \
+      --modality_keys single_arm gripper
+   echo "Finished checkpoint-${i}"
+done
 
 # deploy
 python scripts/inference_service.py --server \

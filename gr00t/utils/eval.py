@@ -125,6 +125,10 @@ def calc_mse_for_single_trajectory(
 
         plt.tight_layout()
         plt.show()
-        plt.savefig(f"trajectory_{traj_id}_modality_{modality_keys}.png")
+        import datetime
+        time_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = f"trajectory_time_{time_str}.png"
+        plt.savefig(save_path)
+        print(f"Saved plot to {save_path}")
 
     return mse
