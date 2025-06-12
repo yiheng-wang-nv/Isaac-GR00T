@@ -7,3 +7,15 @@ python scripts/gr00t_finetune.py \
    --data-config so100_dualcam \
    --report_to tensorboard \
    --video-backend torchvision_av
+
+# fps 15 new data finetune
+python scripts/gr00t_finetune.py \
+   --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras_fps15 \
+   --num-gpus 1 \
+   --batch-size 32 \
+   --output-dir so101_scissors_2_cameras_fps15_finetune \
+   --max-steps 10000 \
+   --data-config so100_dualcam \
+   --report_to tensorboard \
+   --base_model_path /localhome/local-vennw/code/Isaac-GR00T/so101_scissors_2_cameras_finetune/checkpoint-8000 \
+   --video-backend torchvision_av
