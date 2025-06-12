@@ -71,9 +71,9 @@ from lerobot.common.utils.utils import (
 # User can just move this single python class method gr00t/eval/service.py
 # to their code or do the following line below
 # sys.path.append(os.path.expanduser("~/Isaac-GR00T/gr00t/eval/"))
-from service import ExternalRobotInferenceClient
+# from service import ExternalRobotInferenceClient
 
-# from gr00t.eval.service import ExternalRobotInferenceClient
+from gr00t.eval.service import ExternalRobotInferenceClient
 
 #################################################################################
 

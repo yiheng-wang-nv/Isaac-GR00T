@@ -70,6 +70,7 @@ class Gr00tPolicy(BasePolicy):
         modality_transform: ComposedModalityTransform,
         denoising_steps: Optional[int] = None,
         device: Union[int, str] = "cuda" if torch.cuda.is_available() else "cpu",
+        use_local_model: bool = False,
     ):
         """
         Initialize the Gr00tPolicy.
@@ -82,15 +83,16 @@ class Gr00tPolicy(BasePolicy):
             denoising_steps: Number of denoising steps to use for the action head.
             device (Union[int, str]): Device to run the model on.
         """
-        try:
-            # NOTE(YL) this returns the local path to the model which is normally
-            # saved in ~/.cache/huggingface/hub/
-            model_path = snapshot_download(model_path, repo_type="model")
-            # HFValidationError, RepositoryNotFoundError
-        except (HFValidationError, RepositoryNotFoundError):
-            print(
-                f"Model not found or avail in the huggingface hub. Loading from local path: {model_path}"
-            )
+        if not use_local_model:
+            try:
+                # NOTE(YL) this returns the local path to the model which is normally
+                # saved in ~/.cache/huggingface/hub/
+                model_path = snapshot_download(model_path, repo_type="model")
+                # HFValidationError, RepositoryNotFoundError
+            except (HFValidationError, RepositoryNotFoundError):
+                print(
+                    f"Model not found or avail in the huggingface hub. Loading from local path: {model_path}"
+                )
 
         self._modality_config = modality_config
         self._modality_transform = modality_transform
@@ -105,7 +107,7 @@ class Gr00tPolicy(BasePolicy):
             self.embodiment_tag = embodiment_tag
 
         # Load model
-        self._load_model(model_path)
+        self._load_model(model_path, use_local_model=use_local_model)
         # Load transforms
         self._load_metadata(self.model_path / "experiment_cfg")
         # Load horizons
@@ -228,8 +230,8 @@ class Gr00tPolicy(BasePolicy):
                 return False
         return True
 
-    def _load_model(self, model_path):
-        model = GR00T_N1_5.from_pretrained(model_path, torch_dtype=COMPUTE_DTYPE)
+    def _load_model(self, model_path, use_local_model: bool = False):
+        model = GR00T_N1_5.from_pretrained(model_path, torch_dtype=COMPUTE_DTYPE, use_local_model=use_local_model)
         model.eval()  # Set model to eval mode
         model.to(device=self.device)  # type: ignore
 

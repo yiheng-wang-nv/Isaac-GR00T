@@ -98,6 +98,7 @@ def main(args: ArgsConfig):
             embodiment_tag=args.embodiment_tag,
             denoising_steps=args.denoising_steps,
             device="cuda" if torch.cuda.is_available() else "cpu",
+            use_local_model=True,
         )
     else:
         policy: BasePolicy = RobotInferenceClient(host=args.host, port=args.port)

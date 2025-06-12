@@ -80,6 +80,7 @@ def main(args: ArgsConfig):
             modality_transform=modality_transform,
             embodiment_tag=args.embodiment_tag,
             denoising_steps=args.denoising_steps,
+            use_local_model=True,
         )
 
         # Start the server

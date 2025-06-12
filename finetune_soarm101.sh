@@ -19,3 +19,30 @@ python scripts/gr00t_finetune.py \
    --report_to tensorboard \
    --base_model_path /localhome/local-vennw/code/Isaac-GR00T/so101_scissors_2_cameras_finetune/checkpoint-8000 \
    --video-backend torchvision_av
+
+# check finetune
+python scripts/eval_policy.py --plot \
+   --embodiment_tag new_embodiment \
+   --model_path so101_scissors_2_cameras_fps15_finetune/checkpoint-8000 \
+   --data_config so100_dualcam \
+  --dataset_path /home/venn/.cache/huggingface/lerobot/Venn/so101_scissors_2_cameras/ \
+   --video_backend torchvision_av \
+   --modality_keys single_arm gripper
+
+# deploy
+python scripts/inference_service.py --server \
+    --model_path so101_scissors_2_cameras_fps15_finetune/checkpoint-8000 \
+    --embodiment-tag new_embodiment \
+    --data-config so100_dualcam \
+    --denoising-steps 4
+
+python getting_started/examples/eval_lerobot.py \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM1 \
+    --robot.id=so101_follower \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, room: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
+    --policy_host=localhost \
+    --lang_instruction="Grip a straight scissor and put it in the box."
+
+# "Grip a tweezer and put it in the box."
+# "Grip a straight scissor and put it in the box."

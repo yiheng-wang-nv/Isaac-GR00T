@@ -125,5 +125,6 @@ def calc_mse_for_single_trajectory(
 
         plt.tight_layout()
         plt.show()
+        plt.savefig(f"trajectory_{traj_id}_modality_{modality_keys}.png")
 
     return mse
