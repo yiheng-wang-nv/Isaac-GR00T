@@ -1,14 +1,15 @@
-python scripts/gr00t_finetune.py \
-   --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras \
+# gr00t n1
+python scripts/gr00t_n1_finetune.py \
+   --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras_fps15  \
    --num-gpus 1 \
    --batch-size 64 \
-   --output-dir so101_scissors_2_cameras_finetune \
+   --output-dir so101_scissors_2_cameras_fps15_finetune_n1 \
    --max-steps 10000 \
    --data-config so100_dualcam \
    --report_to tensorboard \
    --video-backend torchvision_av
 
-# fps 15 new data finetune
+# gr00t n1.5
 python scripts/gr00t_finetune.py \
    --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras_fps15 \
    --num-gpus 1 \
@@ -21,23 +22,12 @@ python scripts/gr00t_finetune.py \
    --video-backend torchvision_av
 
 # check finetune for checkpoint-3000 to 10000
-for i in {3000..10000..1000}; do
+for i in {10000..10000..1000}; do
    python scripts/eval_policy.py --plot \
       --embodiment_tag new_embodiment \
       --model_path so101_scissors_2_cameras_fps15_finetune/checkpoint-${i} \
       --data_config so100_dualcam \
       --dataset_path finetune_data/so101_scissors_2_cameras_fps15 \
-      --video_backend torchvision_av \
-      --modality_keys single_arm gripper
-   echo "Finished checkpoint-${i}"
-done
-
-for i in {1000..8000..1000}; do
-   python scripts/eval_policy.py --plot \
-      --embodiment_tag new_embodiment \
-      --model_path so101_scissors_2_cameras_finetune/checkpoint-${i} \
-      --data_config so100_dualcam \
-      --dataset_path finetune_data/so101_scissors_2_cameras \
       --video_backend torchvision_av \
       --modality_keys single_arm gripper
    echo "Finished checkpoint-${i}"
