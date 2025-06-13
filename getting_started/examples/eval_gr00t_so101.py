@@ -50,18 +50,31 @@ class SO101Robot:
     """SO101 Robot controller for GR00T policy evaluation."""
     
     def __init__(self, port_follower: str = "/dev/ttyACM1", calibrate: bool = False, 
-                 enable_camera: bool = True, cam_idx: int = 0):
+                 enable_camera: bool = True):
         self.config = So101RobotConfig()
         self.calibrate = calibrate
         self.enable_camera = enable_camera
-        self.cam_idx = cam_idx
+        self.cam_idx = (0, 2)
         self.port_follower = port_follower
         
         # Configure robot
         if not enable_camera:
             self.config.cameras = {}
         else:
-            self.config.cameras = {"wrist": OpenCVCameraConfig(cam_idx, 30, 640, 480, "rgb")}
+            self.config.cameras = {
+                "wrist": OpenCVCameraConfig(
+                    camera_index=self.cam_idx[0],
+                    fps=30,
+                    width=640,
+                    height=480,
+                ),
+                "room": OpenCVCameraConfig(
+                    camera_index=self.cam_idx[1],
+                    fps=30,
+                    width=640,
+                    height=480,
+                )
+            }
         
         # Inference mode: no leader arms needed
         self.config.leader_arms = {}
@@ -116,9 +129,12 @@ class SO101Robot:
         self.robot.is_connected = True
 
         # Connect camera
-        self.camera = self.robot.cameras["wrist"] if self.enable_camera else None
-        if self.camera is not None:
-            self.camera.connect()
+        self.camera_wrist = self.robot.cameras["wrist"] if self.enable_camera else None
+        self.camera_room = self.robot.cameras["room"] if self.enable_camera else None
+        if self.camera_wrist is not None:
+            self.camera_wrist.connect()
+        if self.camera_room is not None:
+            self.camera_room.connect()
         
         print("================> SO101 Robot is fully connected =================")
 
@@ -141,7 +157,7 @@ class SO101Robot:
         """Move robot to initial pose."""
         print("-------------------------------- Moving to initial pose")
         # SO101 initial pose (adjust these values as needed)
-        initial_state = torch.tensor([90, 90, 90, 90, -70, 30], dtype=torch.float32)
+        initial_state = torch.tensor([8, 196, 180, 74, 95, 0], dtype=torch.float32)
         self.robot.send_action(initial_state)
         time.sleep(2)
 
@@ -149,7 +165,7 @@ class SO101Robot:
         """Move robot to home pose."""
         print("-------------------------------- Moving to home pose")
         # SO101 home pose (adjust these values as needed)
-        home_state = torch.tensor([88.0, 156.0, 135.0, 83.0, -89.0, 16.0], dtype=torch.float32)
+        home_state = torch.tensor([8, 196, 180, 74, 95, 0], dtype=torch.float32)
         self.set_target_state(home_state)
         time.sleep(2)
 
@@ -164,16 +180,21 @@ class SO101Robot:
     def get_current_img(self):
         """Get current camera image as RGB numpy array."""
         if not self.enable_camera:
-            return np.zeros((480, 640, 3), dtype=np.uint8)
+            return np.zeros((480, 640, 3), dtype=np.uint8), np.zeros((480, 640, 3), dtype=np.uint8)
         
         img = self.get_observation()["observation.images.wrist"].data.numpy()
+        img_room = self.get_observation()["observation.images.room"].data.numpy()
         # Convert to HWC format if needed
         if len(img.shape) == 3 and img.shape[0] == 3:  # CHW format
             img = img.transpose(1, 2, 0)  # Convert to HWC
+        if len(img_room.shape) == 3 and img_room.shape[0] == 3:  # CHW format
+            img_room = img_room.transpose(1, 2, 0)  # Convert to HWC
         # Ensure uint8
         if img.dtype != np.uint8:
             img = (img * 255).astype(np.uint8)
-        return img
+        if img_room.dtype != np.uint8:
+            img_room = (img_room * 255).astype(np.uint8)
+        return img, img_room
 
     def set_target_state(self, target_state: torch.Tensor):
         """Send target state to robot."""
@@ -211,11 +232,12 @@ class Gr00tSO101InferenceClient:
         print(f"Connected to GR00T server at {host}:{port}")
         print(f"Task: {language_instruction}")
 
-    def get_action(self, img: np.ndarray, state: np.ndarray) -> dict:
+    def get_action(self, img: np.ndarray, img_room: np.ndarray, state: np.ndarray) -> dict:
         """Get action from GR00T policy."""
         # Format observation for SO101 wrist config
         obs_dict = {
             "video.wrist": img[np.newaxis, :, :, :],  # Add batch dimension
+            "video.room": img_room[np.newaxis, :, :, :],  # Add batch dimension
             "state.single_arm": state[:5][np.newaxis, :].astype(np.float64),  # 5 arm joints
             "state.gripper": state[5:6][np.newaxis, :].astype(np.float64),   # 1 gripper joint
             "annotation.human.task_description": [self.language_instruction],
@@ -228,16 +250,6 @@ class Gr00tSO101InferenceClient:
         print(f"Task updated: {instruction}")
 
 
-def view_img(img, title: str = "Camera View"):
-    """Display image using matplotlib (non-blocking)."""
-    plt.figure(figsize=(8, 6))
-    plt.imshow(img)
-    plt.title(title)
-    plt.axis("off")
-    plt.pause(0.001)  # Non-blocking show
-    plt.clf()  # Clear for next frame
-
-
 def main():
     parser = argparse.ArgumentParser(description="SO101 GR00T Policy Evaluation")
     
@@ -247,7 +259,6 @@ def main():
     
     # Robot configuration
     parser.add_argument("--port_follower", type=str, default="/dev/ttyACM1", help="SO101 serial port")
-    parser.add_argument("--camera_index", type=int, default=0, help="Camera index")
     
     # Task configuration
     parser.add_argument("--task_description", type=str, 
@@ -288,7 +299,6 @@ def main():
         port_follower=args.port_follower,
         calibrate=args.calibrate,
         enable_camera=True,
-        cam_idx=args.camera_index
     )
 
     image_count = 0
@@ -300,15 +310,20 @@ def main():
             
             for i in tqdm(range(args.actions_to_execute), desc="Executing actions"):
                 # Get current observation
-                img = robot.get_current_img()
+                img, img_room = robot.get_current_img()
                 state = robot.get_current_state()
-                
-                # Display image
-                view_img(img, f"Step {i}/{args.actions_to_execute}")
-                
+                # print(state)
+                # print(img.shape, img.mean(), img.std())
+                # print(img_room.shape, img_room.mean(), img_room.std())
+                # observation = robot.get_observation()
+                # print(observation["observation.state"])
+                # obs_img = observation["observation.images.wrist"].data.numpy()
+                # obs_img_room = observation["observation.images.room"].data.numpy()
+                # print(obs_img.shape, obs_img.mean(), obs_img.std())
+                # print(obs_img_room.shape, obs_img_room.mean(), obs_img_room.std())
                 # Get action from policy
                 action_start_time = time.time()
-                action = client.get_action(img, state)
+                action = client.get_action(img, img_room, state)
                 
                 # Execute action chunk
                 execution_start_time = time.time()
@@ -323,11 +338,10 @@ def main():
                     
                     # Send to robot
                     robot.set_target_state(torch.from_numpy(concat_action))
-                    time.sleep(0.02)  # Small delay between actions
+                    time.sleep(0.1)  # Small delay between actions
                     
                     # Update display
-                    img = robot.get_current_img()
-                    view_img(img, f"Step {i}/{args.actions_to_execute} - Action {j}/{args.action_horizon}")
+                    img, img_room = robot.get_current_img()
                     
                     # Save image if recording
                     if args.record_images:
@@ -363,4 +377,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
