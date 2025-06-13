@@ -1,14 +1,3 @@
-# gr00t n1
-python scripts/gr00t_n1_finetune.py \
-   --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras_fps15  \
-   --num-gpus 1 \
-   --batch-size 16 \
-   --output-dir so101_scissors_2_cameras_fps15_finetune_n1 \
-   --max-steps 10000 \
-   --data-config so100_dualcam \
-   --report_to tensorboard \
-   --video-backend torchvision_av
-
 # gr00t n1.5
 python scripts/gr00t_finetune.py \
    --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras_fps15 \
