@@ -17,6 +17,7 @@ import argparse
 import warnings
 
 import numpy as np
+import os
 
 from gr00t.data.dataset import LeRobotSingleDataset
 from gr00t.eval.robot import RobotInferenceClient
@@ -54,9 +55,7 @@ if __name__ == "__main__":
         choices=list(DATA_CONFIG_MAP.keys()),
         help="data config name",
     )
-    parser.add_argument("--steps", type=int, default=150, help="number of steps to run")
-    parser.add_argument("--trajs", type=int, default=1, help="trajectories to run")
-    parser.add_argument("--action_horizon", type=int, default=16)
+    parser.add_argument("--action_horizon", type=int, default=12)
     parser.add_argument("--video_backend", type=str, default="decord")
     parser.add_argument("--dataset_path", type=str, default="demo_data/robot_sim.PickNPlace/")
     parser.add_argument(
@@ -94,6 +93,7 @@ if __name__ == "__main__":
             embodiment_tag=args.embodiment_tag,
             denoising_steps=args.denoising_steps,
             device="cuda" if torch.cuda.is_available() else "cpu",
+            use_local_model=True,
         )
     else:
         policy: BasePolicy = RobotInferenceClient(host=args.host, port=args.port)
@@ -135,14 +135,17 @@ if __name__ == "__main__":
     print("Running on all trajs with modality keys:", args.modality_keys)
 
     all_mse = []
-    for traj_id in range(args.trajs):
+    checkpoint_name = args.model_path.split("/")[-1]
+    save_folder = "eval_results"
+    os.makedirs(save_folder, exist_ok=True)
+    for traj_id in range(len(dataset.trajectory_lengths)):
         print("Running trajectory:", traj_id)
         mse = calc_mse_for_single_trajectory(
             policy,
             dataset,
             traj_id,
             modality_keys=args.modality_keys,
-            steps=args.steps,
+            steps=dataset.trajectory_lengths[traj_id],
             action_horizon=args.action_horizon,
             plot=args.plot,
         )

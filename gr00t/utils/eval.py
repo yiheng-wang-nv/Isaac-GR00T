@@ -42,6 +42,7 @@ def calc_mse_for_single_trajectory(
     steps=300,
     action_horizon=16,
     plot=False,
+    save_path=None,
 ):
     state_joints_across_time = []
     gt_action_across_time = []
@@ -117,5 +118,11 @@ def calc_mse_for_single_trajectory(
 
         plt.tight_layout()
         plt.show()
+        if save_path is None:
+            import datetime
+            time_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = f"trajectory_time_{time_str}.png"
+        plt.savefig(save_path)
+        print(f"Saved plot to {save_path}")
 
     return mse

@@ -218,6 +218,14 @@ class So100DataConfig(BaseDataConfig):
         return ComposedModalityTransform(transforms=transforms)
 
 
+class So100DualCamDataConfig(So100DataConfig):
+    video_keys = ["video.room", "video.wrist"]
+    state_keys = ["state.single_arm", "state.gripper"]
+    action_keys = ["action.single_arm", "action.gripper"]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0]
+    action_indices = list(range(16))
+
 ###########################################################################################
 
 
@@ -682,4 +690,5 @@ DATA_CONFIG_MAP = {
     "bimanual_panda_hand": BimanualPandaHandDataConfig(),
     "single_panda_gripper": SinglePandaGripperDataConfig(),
     "so100": So100DataConfig(),
+    "so100_dualcam": So100DualCamDataConfig(),
 }

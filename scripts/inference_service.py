@@ -76,6 +76,7 @@ if __name__ == "__main__":
             modality_transform=modality_transform,
             embodiment_tag=args.embodiment_tag,
             denoising_steps=args.denoising_steps,
+            use_local_model=True,
         )
 
         # Start the server
@@ -108,13 +109,10 @@ if __name__ == "__main__":
         # - action: action.right_hand: (16, 6)
         # - action: action.waist: (16, 3)
         obs = {
-            "video.ego_view": np.random.randint(0, 256, (1, 256, 256, 3), dtype=np.uint8),
-            "state.left_arm": np.random.rand(1, 7),
-            "state.right_arm": np.random.rand(1, 7),
-            "state.left_hand": np.random.rand(1, 6),
-            "state.right_hand": np.random.rand(1, 6),
-            "state.waist": np.random.rand(1, 3),
-            "annotation.human.action.task_description": ["do your thing!"],
+            "video.wrist": np.random.randint(0, 256, (1, 480, 640, 3), dtype=np.uint8),
+            "state.single_arm": np.random.rand(1, 5),
+            "state.gripper": np.random.rand(1, 1),
+            "annotation.human.action.task_description": ["Grip a tweezer and put it in the box."],
         }
 
         time_start = time.time()
