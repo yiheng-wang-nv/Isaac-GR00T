@@ -35,18 +35,17 @@ done
 
 # deploy
 python scripts/inference_service.py --server \
-    --model_path so101_scissors_2_cameras_fps15_finetune/checkpoint-8000 \
-    --embodiment-tag new_embodiment \
-    --data-config so100_dualcam \
-    --denoising-steps 4
+    --model_path so101_scissors_2_cameras_fps15_finetune_n1/checkpoint-10000 \
+    --embodiment_tag new_embodiment \
+    --data_config so100_dualcam \
+    --denoising_steps 4
 
-python getting_started/examples/eval_lerobot.py \
-    --robot.type=so101_follower \
-    --robot.port=/dev/ttyACM1 \
-    --robot.id=so101_follower \
-    --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, room: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
-    --policy_host=localhost \
-    --lang_instruction="Grip a straight scissor and put it in the box."
+python getting_started/examples/eval_gr00t_so101.py \
+   --host 127.0.0.1 \
+   --port 5555 \
+   --port_follower /dev/ttyACM1 \
+   --task_description "Grip a tweezer and put it in the box." \
+   --actions_to_execute 300
 
 # "Grip a tweezer and put it in the box."
 # "Grip a straight scissor and put it in the box."
