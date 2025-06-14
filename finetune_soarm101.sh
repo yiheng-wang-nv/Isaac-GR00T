@@ -1,13 +1,12 @@
 # gr00t n1.5
 python scripts/gr00t_finetune.py \
-   --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/so101_scissors_2_cameras_fps15 \
+   --dataset-path /localhome/local-vennw/code/Isaac-GR00T/finetune_data/2_cameras_fps15_enhanced_gripper \
    --num-gpus 1 \
-   --batch-size 32 \
-   --output-dir so101_scissors_2_cameras_fps15_finetune \
+   --batch-size 16 \
+   --output-dir 2_cameras_fps15_enhanced_gripper_finetune \
    --max-steps 10000 \
    --data-config so100_dualcam \
    --report_to tensorboard \
-   --base_model_path /localhome/local-vennw/code/Isaac-GR00T/so101_scissors_2_cameras_finetune/checkpoint-8000 \
    --video-backend torchvision_av
 
 # check finetune for checkpoint-3000 to 10000
@@ -28,14 +27,6 @@ python scripts/inference_service.py --server \
     --embodiment-tag new_embodiment \
     --data-config so100_dualcam \
     --denoising-steps 4
-
-python getting_started/examples/eval_lerobot.py \
-    --robot.type=so101_follower \
-    --robot.port=/dev/ttyACM1 \
-    --robot.id=so101_follower \
-    --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, room: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
-    --policy_host=localhost \
-    --lang_instruction="Grip a straight scissor and put it in the box."
 
 # "Grip a tweezer and put it in the box."
 # "Grip a straight scissor and put it in the box."
