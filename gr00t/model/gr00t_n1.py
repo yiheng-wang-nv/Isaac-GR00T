@@ -197,7 +197,7 @@ class GR00T_N1_5(PreTrainedModel):
         return backbone_inputs, action_inputs
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, use_local_model: bool = False, **kwargs):
         tune_visual = kwargs.pop("tune_visual", True)
         tune_llm = kwargs.pop("tune_llm", False)
         tune_projector = kwargs.pop("tune_projector", True)
@@ -210,16 +210,19 @@ class GR00T_N1_5(PreTrainedModel):
         print(f"Tune action head DiT: {tune_diffusion_model}")
 
         # get the current model path being downloaded
-        try:
-            # NOTE(YL) This downloads the model to the local cache and returns the local path to the model
-            # saved in ~/.cache/huggingface/hub/
-            local_model_path = snapshot_download(pretrained_model_name_or_path, repo_type="model")
-            # HFValidationError, RepositoryNotFoundError
-        except (HFValidationError, RepositoryNotFoundError):
-            print(
-                f"Model not found or avail in the huggingface hub. Loading from local path: {pretrained_model_name_or_path}"
-            )
+        if use_local_model:
             local_model_path = pretrained_model_name_or_path
+        else:
+            try:
+                # NOTE(YL) This downloads the model to the local cache and returns the local path to the model
+                # saved in ~/.cache/huggingface/hub/
+                local_model_path = snapshot_download(pretrained_model_name_or_path, repo_type="model")
+                # HFValidationError, RepositoryNotFoundError
+            except (HFValidationError, RepositoryNotFoundError):
+                print(
+                    f"Model not found or avail in the huggingface hub. Loading from local path: {pretrained_model_name_or_path}"
+                )
+                local_model_path = pretrained_model_name_or_path
 
         pretrained_model = super().from_pretrained(
             local_model_path, local_model_path=local_model_path, **kwargs

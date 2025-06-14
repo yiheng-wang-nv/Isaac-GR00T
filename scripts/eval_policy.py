@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import List, Literal
 
 import numpy as np
+import os
 import tyro
 
 from gr00t.data.dataset import LeRobotSingleDataset
@@ -58,12 +59,6 @@ class ArgsConfig:
     data_config: Literal[tuple(DATA_CONFIG_MAP.keys())] = "fourier_gr1_arms_only"
     """Data config to use."""
 
-    steps: int = 150
-    """Number of steps to evaluate."""
-
-    trajs: int = 1
-    """Number of trajectories to evaluate."""
-
     action_horizon: int = 16
     """Action horizon to evaluate."""
 
@@ -98,6 +93,7 @@ def main(args: ArgsConfig):
             embodiment_tag=args.embodiment_tag,
             denoising_steps=args.denoising_steps,
             device="cuda" if torch.cuda.is_available() else "cpu",
+            use_local_model=True,
         )
     else:
         policy: BasePolicy = RobotInferenceClient(host=args.host, port=args.port)
@@ -136,16 +132,20 @@ def main(args: ArgsConfig):
     print("Running on all trajs with modality keys:", args.modality_keys)
 
     all_mse = []
-    for traj_id in range(args.trajs):
+    checkpoint_name = args.model_path.split("/")[-1]
+    save_folder = "eval_results"
+    os.makedirs(save_folder, exist_ok=True)
+    for traj_id in range(len(dataset.trajectory_lengths)):
         print("Running trajectory:", traj_id)
         mse = calc_mse_for_single_trajectory(
             policy,
             dataset,
             traj_id,
             modality_keys=args.modality_keys,
-            steps=args.steps,
+            steps=dataset.trajectory_lengths[traj_id],
             action_horizon=args.action_horizon,
             plot=args.plot,
+            save_path=f"{save_folder}/trajectory_{traj_id}_{checkpoint_name}.png"
         )
         print("MSE:", mse)
         all_mse.append(mse)

@@ -222,7 +222,7 @@ class So100DataConfig(BaseDataConfig):
 
 
 class So100DualCamDataConfig(So100DataConfig):
-    video_keys = ["video.front", "video.wrist"]
+    video_keys = ["video.room", "video.wrist"]
     state_keys = ["state.single_arm", "state.gripper"]
     action_keys = ["action.single_arm", "action.gripper"]
     language_keys = ["annotation.human.task_description"]
