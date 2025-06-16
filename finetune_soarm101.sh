@@ -23,8 +23,7 @@ python scripts/inference_service.py --server \
 python eval_gr00t_so101.py \
    --host 127.0.0.1 \
    --port 5555 \
-   --camera_index 0 \
-   --port_follower /dev/ttyACM0 \
+   --port_follower /dev/ttyACM1 \
    --task_description "Grip a straight scissor and put it in the box." \
    --actions_to_execute 300
 
@@ -32,7 +31,6 @@ python eval_gr00t_so101.py \
 python eval_gr00t_so101.py \
    --host 127.0.0.1 \
    --port 5555 \
-   --camera_index 0 \
-   --port_follower /dev/ttyACM0 \
+   --port_follower /dev/ttyACM1 \
    --task_description "Grip a tweezer and put it in the box." \
    --actions_to_execute 300
