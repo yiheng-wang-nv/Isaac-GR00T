@@ -250,6 +250,76 @@ class Gr00tSO101InferenceClient:
         print(f"Task updated: {instruction}")
 
 
+def create_video_from_images(image_dir: str, camera_name: str, fps: int = 10):
+    """Create video from saved images."""
+    image_files = sorted([f for f in os.listdir(image_dir) if f.startswith(f'{camera_name}_') and f.endswith('.jpg')])
+    
+    if not image_files:
+        print(f"No images found for camera {camera_name}")
+        return
+    
+    # Read first image to get dimensions
+    first_img = cv2.imread(os.path.join(image_dir, image_files[0]))
+    height, width, _ = first_img.shape
+    
+    # Create video writer
+    video_path = os.path.join(image_dir, f'{camera_name}_video.mp4')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+    
+    print(f"Creating video for {camera_name} camera with {len(image_files)} frames...")
+    
+    for image_file in tqdm(image_files, desc=f"Processing {camera_name} video"):
+        img = cv2.imread(os.path.join(image_dir, image_file))
+        video_writer.write(img)
+    
+    video_writer.release()
+    print(f"Video saved: {video_path}")
+
+
+def create_side_by_side_video(image_dir: str, fps: int = 10):
+    """Create side-by-side video from both camera images."""
+    wrist_files = sorted([f for f in os.listdir(image_dir) if f.startswith('wrist_') and f.endswith('.jpg')])
+    room_files = sorted([f for f in os.listdir(image_dir) if f.startswith('room_') and f.endswith('.jpg')])
+    
+    if not wrist_files or not room_files:
+        print("Missing images from one or both cameras for side-by-side video")
+        return
+    
+    min_frames = min(len(wrist_files), len(room_files))
+    
+    # Read first images to get dimensions
+    wrist_img = cv2.imread(os.path.join(image_dir, wrist_files[0]))
+    room_img = cv2.imread(os.path.join(image_dir, room_files[0]))
+    
+    height = max(wrist_img.shape[0], room_img.shape[0])
+    width = wrist_img.shape[1] + room_img.shape[1]
+    
+    # Create video writer
+    video_path = os.path.join(image_dir, 'combined_video.mp4')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+    
+    print(f"Creating side-by-side video with {min_frames} frames...")
+    
+    for i in tqdm(range(min_frames), desc="Processing combined video"):
+        wrist_img = cv2.imread(os.path.join(image_dir, wrist_files[i]))
+        room_img = cv2.imread(os.path.join(image_dir, room_files[i]))
+        
+        # Resize images to same height if needed
+        if wrist_img.shape[0] != room_img.shape[0]:
+            target_height = min(wrist_img.shape[0], room_img.shape[0])
+            wrist_img = cv2.resize(wrist_img, (int(wrist_img.shape[1] * target_height / wrist_img.shape[0]), target_height))
+            room_img = cv2.resize(room_img, (int(room_img.shape[1] * target_height / room_img.shape[0]), target_height))
+        
+        # Combine images side by side
+        combined_img = np.hstack([wrist_img, room_img])
+        video_writer.write(combined_img)
+    
+    video_writer.release()
+    print(f"Side-by-side video saved: {video_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="SO101 GR00T Policy Evaluation")
     
@@ -270,6 +340,8 @@ def main():
     parser.add_argument("--action_horizon", type=int, default=12, help="Actions to execute from chunk")
     parser.add_argument("--calibrate", action="store_true", help="Run robot calibration")
     parser.add_argument("--record_images", action="store_true", help="Save images during execution")
+    parser.add_argument("--create_videos", action="store_true", help="Create videos from saved images")
+    parser.add_argument("--video_fps", type=int, default=15, help="FPS for created videos")
     parser.add_argument("--output_dir", type=str, default="eval_so101_images", help="Output directory for images")
     
     args = parser.parse_args()
@@ -290,7 +362,7 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
         # Clear existing images
         for file in os.listdir(args.output_dir):
-            if file.endswith(('.jpg', '.png')):
+            if file.endswith(('.jpg', '.png', '.mp4')):
                 os.remove(os.path.join(args.output_dir, file))
         print(f"Recording images to: {args.output_dir}")
 
@@ -312,15 +384,7 @@ def main():
                 # Get current observation
                 img, img_room = robot.get_current_img()
                 state = robot.get_current_state()
-                # print(state)
-                # print(img.shape, img.mean(), img.std())
-                # print(img_room.shape, img_room.mean(), img_room.std())
-                # observation = robot.get_observation()
-                # print(observation["observation.state"])
-                # obs_img = observation["observation.images.wrist"].data.numpy()
-                # obs_img_room = observation["observation.images.room"].data.numpy()
-                # print(obs_img.shape, obs_img.mean(), obs_img.std())
-                # print(obs_img_room.shape, obs_img_room.mean(), obs_img_room.std())
+                
                 # Get action from policy
                 action_start_time = time.time()
                 action = client.get_action(img, img_room, state)
@@ -343,12 +407,18 @@ def main():
                     # Update display
                     img, img_room = robot.get_current_img()
                     
-                    # Save image if recording
+                    # Save images if recording
                     if args.record_images:
-                        # Resize and save
-                        img_save = cv2.resize(img, (320, 240))
-                        img_save_bgr = cv2.cvtColor(img_save, cv2.COLOR_RGB2BGR)
-                        cv2.imwrite(f"{args.output_dir}/img_{image_count:06d}.jpg", img_save_bgr)
+                        # Resize and save wrist camera image
+                        img_wrist_save = cv2.resize(img, (320, 240))
+                        img_wrist_bgr = cv2.cvtColor(img_wrist_save, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(f"{args.output_dir}/wrist_{image_count:06d}.jpg", img_wrist_bgr)
+                        
+                        # Resize and save room camera image
+                        img_room_save = cv2.resize(img_room, (320, 240))
+                        img_room_bgr = cv2.cvtColor(img_room_save, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(f"{args.output_dir}/room_{image_count:06d}.jpg", img_room_bgr)
+                        
                         image_count += 1
                 
                 action_time = time.time() - action_start_time
@@ -365,7 +435,15 @@ def main():
             robot.go_home()
             
             if args.record_images:
-                print(f"Saved {image_count} images to {args.output_dir}")
+                print(f"Saved {image_count} images from each camera to {args.output_dir}")
+                
+                # Create videos if requested
+                if args.create_videos:
+                    print("Creating videos from saved images...")
+                    create_video_from_images(args.output_dir, "wrist", args.video_fps)
+                    create_video_from_images(args.output_dir, "room", args.video_fps)
+                    create_side_by_side_video(args.output_dir, args.video_fps)
+                    print("Video creation completed!")
 
     except KeyboardInterrupt:
         print("\nExecution interrupted by user")
