@@ -12,7 +12,7 @@ python scripts/gr00t_finetune.py \
 
 # deploy
 python scripts/inference_service.py --server \
-    --model_path 2_cameras_fps15_enhanced_gripper_finetune_5k_196_data/checkpoint-5000 \
+    --model_path 2_cameras_fps15_enhanced_gripper_finetune_30k_196_data/checkpoint-30000 \
     --embodiment-tag new_embodiment \
     --data-config so100_dualcam \
     --denoising-steps 4
@@ -25,7 +25,10 @@ python eval_gr00t_so101.py \
    --port 5555 \
    --port_follower /dev/ttyACM1 \
    --task_description "Grip a straight scissor and put it in the box." \
-   --actions_to_execute 300
+   --actions_to_execute 20 \
+   --record_images \
+   --create_videos \
+   --output_dir scissor_inference_output_single
 
 # inference request, tweezer
 python eval_gr00t_so101.py \
@@ -33,4 +36,7 @@ python eval_gr00t_so101.py \
    --port 5555 \
    --port_follower /dev/ttyACM1 \
    --task_description "Grip a tweezer and put it in the box." \
-   --actions_to_execute 300
+   --actions_to_execute 15 \
+   --record_images \
+   --create_videos \
+   --output_dir tweezer_inference_output_single

@@ -20,10 +20,9 @@ Usage:
     python eval_gr00t_so101.py \
         --host 127.0.0.1 \
         --port 5555 \
-        --camera_index 0 \
-        --port_follower /dev/ttyACM0 \
+        --port_follower /dev/ttyACM1 \
         --task_description "Grip a straight scissor and put it in the box." \
-        --actions_to_execute 300
+        --actions_to_execute 20
 """
 
 import argparse
@@ -159,7 +158,7 @@ class SO101Robot:
         # SO101 initial pose (adjust these values as needed)
         initial_state = torch.tensor([8, 196, 180, 74, 95, 0], dtype=torch.float32)
         self.robot.send_action(initial_state)
-        time.sleep(2)
+        time.sleep(0.5)
 
     def go_home(self):
         """Move robot to home pose."""
@@ -167,7 +166,7 @@ class SO101Robot:
         # SO101 home pose (adjust these values as needed)
         home_state = torch.tensor([8, 196, 180, 74, 95, 0], dtype=torch.float32)
         self.set_target_state(home_state)
-        time.sleep(2)
+        time.sleep(0.5)
 
     def get_observation(self):
         """Get robot observation."""
@@ -402,7 +401,7 @@ def main():
                     
                     # Send to robot
                     robot.set_target_state(torch.from_numpy(concat_action))
-                    time.sleep(0.1)  # Small delay between actions
+                    time.sleep(0.05)  # Small delay between actions
                     
                     # Update display
                     img, img_room = robot.get_current_img()
@@ -410,12 +409,12 @@ def main():
                     # Save images if recording
                     if args.record_images:
                         # Resize and save wrist camera image
-                        img_wrist_save = cv2.resize(img, (320, 240))
+                        img_wrist_save = cv2.resize(img, (640, 480))
                         img_wrist_bgr = cv2.cvtColor(img_wrist_save, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(f"{args.output_dir}/wrist_{image_count:06d}.jpg", img_wrist_bgr)
                         
                         # Resize and save room camera image
-                        img_room_save = cv2.resize(img_room, (320, 240))
+                        img_room_save = cv2.resize(img_room, (640, 480))
                         img_room_bgr = cv2.cvtColor(img_room_save, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(f"{args.output_dir}/room_{image_count:06d}.jpg", img_room_bgr)
                         
