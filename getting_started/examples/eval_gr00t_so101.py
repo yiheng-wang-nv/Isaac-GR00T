@@ -8,12 +8,10 @@ This script connects to a GR00T inference server and runs policy evaluation on S
 Usage:
     # Start GR00T server first:
     python scripts/inference_service.py --server \
-        --model_path /localhome/local-vennw/code/Isaac-GR00T/so101_wrist_finetune/checkpoint-10000 \
-        --embodiment_tag new_embodiment \
-        --data_config so101_wrist \
-        --host 0.0.0.0 \
-        --port 5555 \
-        --denoising_steps 4
+        --model_path 2_cameras_fps15_enhanced_gripper_finetune_3k_231_data/checkpoint-3000 \
+        --embodiment-tag new_embodiment \
+        --data-config so100_dualcam \
+        --denoising-steps 4
 
     # Then run this client:
     ssh -L 5555:localhost:5555 local-vennw@10.176.195.216
@@ -53,7 +51,7 @@ class SO101Robot:
         self.config = So101RobotConfig()
         self.calibrate = calibrate
         self.enable_camera = enable_camera
-        self.cam_idx = (0, 2)
+        self.cam_idx = (1, 0)
         self.port_follower = port_follower
         
         # Configure robot
