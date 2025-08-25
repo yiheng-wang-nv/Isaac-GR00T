@@ -99,16 +99,15 @@ class FourierGr1ArmsOnlyDataConfig(BaseDataConfig):
         transforms = [
             # video transforms
             VideoToTensor(apply_to=self.video_keys),
-            VideoGaussianNoise(apply_to=self.video_keys, sigma=1.0),
-            # VideoCrop(apply_to=self.video_keys, scale=0.95),
+            VideoCrop(apply_to=self.video_keys, scale=0.95),
             VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
-            # VideoColorJitter(
-            #     apply_to=self.video_keys,
-            #     brightness=0.3,
-            #     contrast=0.4,
-            #     saturation=0.5,
-            #     hue=0.08,
-            # ),
+            VideoColorJitter(
+                apply_to=self.video_keys,
+                brightness=0.3,
+                contrast=0.4,
+                saturation=0.5,
+                hue=0.08,
+            ),
             VideoToNumpy(apply_to=self.video_keys),
             # state transforms
             StateActionToTensor(apply_to=self.state_keys),
@@ -284,6 +283,7 @@ class UnitreeG1DataConfig_v2(BaseDataConfig):
                 saturation=0.5,
                 hue=0.08,
             ),
+            VideoGaussianNoise(apply_to=self.video_keys, sigma=1.0),
             VideoToNumpy(apply_to=self.video_keys),
             # state transforms
             StateActionToTensor(apply_to=self.state_keys),
