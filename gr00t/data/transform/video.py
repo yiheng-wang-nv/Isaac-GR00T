@@ -244,7 +244,7 @@ class VideoGaussianNoise(VideoTransform):
 
     def get_transform(self, mode: Literal["train", "eval"] = "train") -> Callable | None:
         if mode == "eval":
-            return None
+            return T.Lambda(lambda x: (self.sigma * torch.randn_like(x)).clamp(0, 1))
         if self.backend == "torchvision":
             return T.Lambda(lambda x: (self.sigma * torch.randn_like(x)).clamp(0, 1))
         else:

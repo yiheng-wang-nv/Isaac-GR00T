@@ -73,7 +73,7 @@ class ArgsConfig:
     tune_projector: bool = True
     """Whether to fine-tune the projector."""
 
-    tune_diffusion_model: bool = False
+    tune_diffusion_model: bool = True
     """Whether to fine-tune the diffusion model."""
 
     resume: bool = False
@@ -83,7 +83,7 @@ class ArgsConfig:
     learning_rate: float = 1e-4
     """Learning rate for training."""
 
-    weight_decay: float = 0
+    weight_decay: float = 1e-5
     """Weight decay for AdamW optimizer."""
 
     warmup_ratio: float = 0.05
