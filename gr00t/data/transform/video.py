@@ -307,9 +307,11 @@ class VideoGaussianNoise(VideoTransform):
 
     def get_transform(self, mode: Literal["train", "eval"] = "train") -> Callable | None:
         if mode == "eval":
-            return T.Lambda(lambda x: (self.sigma * torch.randn_like(x)).clamp(0, 1))
+            # return T.Lambda(lambda x: (self.sigma * torch.randn_like(x)).clamp(0, 1))
+            return T.Lambda(lambda x: torch.zeros_like(x))
         if self.backend == "torchvision":
-            return T.Lambda(lambda x: (self.sigma * torch.randn_like(x)).clamp(0, 1))
+            # return T.Lambda(lambda x: (self.sigma * torch.randn_like(x)).clamp(0, 1))
+            return T.Lambda(lambda x: torch.zeros_like(x))
         else:
             raise ValueError(f"Backend {self.backend} not supported for VideoGaussianNoise")
 

@@ -377,7 +377,7 @@ class UnitreeG1DataConfig_v2(BaseDataConfig):
                 saturation=0.5,
                 hue=0.08,
             ),
-            VideoGaussianNoise(apply_to=self.video_keys, sigma=1.0),
+            # VideoGaussianNoise(apply_to=self.video_keys, sigma=1.0),
             VideoToNumpy(apply_to=self.video_keys),
             # state transforms
             StateActionToTensor(apply_to=self.state_keys),
