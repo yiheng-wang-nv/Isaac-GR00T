@@ -203,6 +203,7 @@ class UnitreeG1DataConfig_v4(BaseDataConfig):
                 apply_to=self.state_keys,
                 normalization_modes={key: "min_max" for key in self.state_keys},
             ),
+            # StateActionSinCosTransform(apply_to=self.state_keys),
             # action transforms
             StateActionToTensor(apply_to=self.action_keys),
             StateActionTransform(
