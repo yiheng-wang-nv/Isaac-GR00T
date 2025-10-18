@@ -297,10 +297,11 @@ class UnitreeG1DataConfig(BaseDataConfig):
             VideoToNumpy(apply_to=self.video_keys),
             # state transforms
             StateActionToTensor(apply_to=self.state_keys),
-            StateActionTransform(
-                apply_to=self.state_keys,
-                normalization_modes={key: "min_max" for key in self.state_keys},
-            ),
+            # StateActionTransform(
+            #     apply_to=self.state_keys,
+            #     normalization_modes={key: "min_max" for key in self.state_keys},
+            # ),
+            StateActionSinCosTransform(apply_to=self.state_keys),
             # action transforms
             StateActionToTensor(apply_to=self.action_keys),
             StateActionTransform(
