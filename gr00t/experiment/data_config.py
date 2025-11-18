@@ -275,13 +275,12 @@ class So100DualCamDataConfig(So100DataConfig):
 
 
 class UnitreeG1DataConfig(BaseDataConfig):
-    video_keys = ["video.rs_view"]
+    video_keys = ["video.left_wrist_view", "video.right_wrist_view", "video.room_view"]
     state_keys = ["state.left_arm", "state.right_arm", "state.left_hand", "state.right_hand"]
     action_keys = ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand"]
     language_keys = ["annotation.human.task_description"]
     observation_indices = [0]
     action_indices = list(range(16))
-
     def transform(self) -> ModalityTransform:
         transforms = [
             # video transforms
@@ -298,10 +297,11 @@ class UnitreeG1DataConfig(BaseDataConfig):
             VideoToNumpy(apply_to=self.video_keys),
             # state transforms
             StateActionToTensor(apply_to=self.state_keys),
-            StateActionTransform(
-                apply_to=self.state_keys,
-                normalization_modes={key: "min_max" for key in self.state_keys},
-            ),
+            # StateActionTransform(
+            #     apply_to=self.state_keys,
+            #     normalization_modes={key: "min_max" for key in self.state_keys},
+            # ),
+            StateActionSinCosTransform(apply_to=self.state_keys),
             # action transforms
             StateActionToTensor(apply_to=self.action_keys),
             StateActionTransform(
