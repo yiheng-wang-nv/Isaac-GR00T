@@ -66,6 +66,8 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
+    background_noise_on_mask: bool = False
+    """If True, replace background (mask==0) with random noise before augmentations."""
 
     # --- Training Configuration ---
     global_batch_size: int = 64

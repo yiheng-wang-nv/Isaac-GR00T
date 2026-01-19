@@ -327,48 +327,55 @@ galbot_g1_config = {
             "right_arm_camera_color_optical_frame",
         ],
     ),
-    # State modality
+    # State modality: proprioceptive observations
     "state": ModalityConfig(
-        delta_indices=[0],
+        delta_indices=[0],  # Current state
         modality_keys=[
             "left_arm_joint",
             "left_gripper_joint",
             "right_arm_joint",
             "right_gripper_joint",
-            "chassis_joint",
-            "head_joint",
-            "left_key_joint",
-            "leg_joint",
-            "right_key_joint",
         ],
+        sin_cos_embedding_keys=["left_arm_joint", "right_arm_joint"],
     ),
     # Action modality: 16-step prediction horizon
     "action": ModalityConfig(
-        delta_indices=list(range(0, 16)),
+        delta_indices=list(range(0, 16)),  # Predict 16 steps into the future
         modality_keys=[
             "left_arm_joint",
             "left_gripper_joint",
             "right_arm_joint",
             "right_gripper_joint",
-            "chassis_joint",
-            "head_joint",
-            "left_key_joint",
-            "leg_joint",
-            "right_key_joint",
         ],
         action_configs=[
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
-            ActionConfig(rep=ActionRepresentation.ABSOLUTE, type=ActionType.NON_EEF, format=ActionFormat.DEFAULT),
+            # left_arm: use absolute actions (matching old config with min_max normalization)
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,  # Joint space control
+                format=ActionFormat.DEFAULT,
+            ),
+            # left_gripper: use absolute actions
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+            # right_arm: use absolute actions
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+            # right_gripper: use absolute actions
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
         ],
     ),
-    # Language modality
+    
+    # Language modality: task description
     "language": ModalityConfig(
         delta_indices=[0],
         modality_keys=["annotation.human.task_description"],
@@ -379,9 +386,6 @@ galbot_g1_config = {
 def register_modality_config(
     config: dict, embodiment_tag: EmbodimentTag = EmbodimentTag.NEW_EMBODIMENT
 ):
-    assert embodiment_tag.value not in MODALITY_CONFIGS, (
-        f"Embodiment tag {embodiment_tag} already registered"
-    )
     MODALITY_CONFIGS[embodiment_tag.value] = config
 
 
