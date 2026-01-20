@@ -29,3 +29,17 @@ CUDA_VISIBLE_DEVICES=1,2 torchrun --nproc_per_node=2 gr00t/experiment/launch_fin
   --background-noise-on-mask \
   --global-batch-size 32 \
   --dataloader-num-workers 4
+
+CUDA_VISIBLE_DEVICES=1,2 torchrun --nproc_per_node=2 gr00t/experiment/launch_finetune.py \
+  --base-model-path nvidia/GR00T-N1.6-3B \
+  --dataset-path /localhome/local-vennw/code/galbot_lerobot_dataset/task7_20260106_merged_lerobot \
+  --embodiment-tag NEW_EMBODIMENT \
+  --num-gpus 2 \
+  --output-dir /localhome/local-vennw/code/Isaac-GR00T/outputs/task7_20260106_merged_lerobot_with_noise_tune_visual \
+  --save-total-limit 5 \
+  --save-steps 5000 \
+  --max-steps 100000 \
+  --background-noise-on-mask \
+  --tune-visual \
+  --global-batch-size 32 \
+  --dataloader-num-workers 4
