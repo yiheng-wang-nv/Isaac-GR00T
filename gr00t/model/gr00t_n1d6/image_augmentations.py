@@ -8,51 +8,37 @@ import torch
 import torchvision.transforms.v2 as transforms
 
 
-class MaskedColorJitter(A.ImageOnlyTransform):
-    """Apply ColorJitter only to specific mask regions.
+class MaskedColorTransform(A.ImageOnlyTransform):
+    """Apply random color transformation to specific mask regions.
     
-    This wraps Albumentations ColorJitter but only applies it to pixels
-    matching the target mask values.
+    Randomly chooses between two modes:
+    - grayscale_tint: Convert to grayscale then tint (preserves texture, changes color completely)
+    - random_tint: Apply semi-transparent color overlay (partial color change)
     
     Args:
         target_mask_values: List of mask values to apply the transform to
-        brightness: ColorJitter brightness range
-        contrast: ColorJitter contrast range
-        saturation: ColorJitter saturation range
-        hue: ColorJitter hue range
+        grayscale_prob: Probability of using grayscale_tint mode (vs random_tint)
+        alpha_range: (min, max) for random_tint overlay intensity
         p: Probability of applying the transform
     """
     
     def __init__(
         self,
         target_mask_values: Sequence[int] = (5,),
-        brightness: float = 0.2,
-        contrast: float = 0.2,
-        saturation: float = 0.2,
-        hue: float = 0.1,
+        grayscale_prob: float = 0.5,
+        alpha_range: tuple[float, float] = (0.3, 1.0),
         p: float = 0.5,
         always_apply: bool | None = None,
     ):
         super().__init__(p=p, always_apply=always_apply)
         self.target_mask_values = list(target_mask_values)
-        self.brightness = brightness
-        self.contrast = contrast
-        self.saturation = saturation
-        self.hue = hue
-        # Internal ColorJitter (always apply, we control p at outer level)
-        self._jitter = A.ColorJitter(
-            brightness=brightness,
-            contrast=contrast,
-            saturation=saturation,
-            hue=hue,
-            p=1.0,
-        )
+        self.grayscale_prob = grayscale_prob
+        self.alpha_range = alpha_range
     
     def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
         if mask is None:
             return img
         
-        # Create combined mask for all target values
         region_mask = np.zeros(mask.shape[:2], dtype=bool)
         for val in self.target_mask_values:
             region_mask |= (mask == val)
@@ -60,20 +46,38 @@ class MaskedColorJitter(A.ImageOnlyTransform):
         if not region_mask.any():
             return img
         
-        # Apply ColorJitter to entire image
-        jittered = self._jitter(image=img)["image"]
+        # Random color
+        random_color = np.random.randint(0, 256, size=3).astype(np.float32)
+        result = img.copy().astype(np.float32)
         
-        # Only keep jittered pixels in masked region
-        result = img.copy()
-        result[region_mask] = jittered[region_mask]
+        # Choose mode: grayscale_tint or random_tint
+        use_grayscale = np.random.random() < self.grayscale_prob
         
-        return result
+        if use_grayscale:
+            # Grayscale + tint: preserves texture, completely changes color
+            tint = random_color / 255.0
+            gray = (
+                0.299 * result[..., 0] +
+                0.587 * result[..., 1] +
+                0.114 * result[..., 2]
+            )
+            for c in range(3):
+                result[region_mask, c] = gray[region_mask] * tint[c]
+        else:
+            # Random tint: semi-transparent overlay
+            alpha = np.random.uniform(self.alpha_range[0], self.alpha_range[1])
+            for c in range(3):
+                result[region_mask, c] = (
+                    result[region_mask, c] * (1 - alpha) + random_color[c] * alpha
+                )
+        
+        return np.clip(result, 0, 255).astype(np.uint8)
     
     def get_params_dependent_on_data(self, params, data) -> dict:
         return {"mask": data.get("mask")}
     
     def get_transform_init_args_names(self) -> tuple[str, ...]:
-        return ("target_mask_values", "brightness", "contrast", "saturation", "hue")
+        return ("target_mask_values", "grayscale_prob", "alpha_range")
 
 
 class BackgroundNoiseTransform(A.ImageOnlyTransform):
@@ -116,6 +120,9 @@ def apply_with_replay(transform, images, masks=None, replay=None):
     
     Replay ensures consistent random augmentation parameters across all images in a sequence,
     which is critical for temporal consistency in video/trajectory data.
+    
+    Mask-based transforms (attached as transform.mask_transforms) are applied per-frame
+    BEFORE the main transform, ensuring each frame uses its own mask.
 
     Args:
         transform: Albumentations ReplayCompose or Compose transform
@@ -134,6 +141,9 @@ def apply_with_replay(transform, images, masks=None, replay=None):
     current_replay = replay
 
     has_replay = hasattr(transform, "replay")
+    
+    # Get mask-based transforms (applied per-frame, not replayed)
+    mask_transforms = getattr(transform, "mask_transforms", None)
 
     if masks is not None and len(masks) != len(images):
         raise ValueError(
@@ -146,6 +156,13 @@ def apply_with_replay(transform, images, masks=None, replay=None):
         if mask_array is not None and mask_array.dtype == np.bool_:
             mask_array = mask_array.astype(np.uint8)
 
+        # Apply mask-based transforms FIRST (per-frame, using current frame's mask)
+        if mask_transforms and mask_array is not None:
+            for mask_tf in mask_transforms:
+                result = mask_tf(image=img_array, mask=mask_array)
+                img_array = result["image"]
+
+        # Apply main transform with replay (geometric transforms, etc.)
         if has_replay:
             if current_replay is None:
                 if mask_array is not None:
@@ -334,12 +351,13 @@ def build_image_transformations_albumentations(
         shortest_image_edge: Shortest edge size for resizing
         crop_fraction: Fraction of image to crop
         extra_augmentation_config: Optional dict for additional augmentations. Supported keys:
-            - "background_noise_on_mask": bool - Replace background (mask==0) with noise
+            - "background_noise_on_mask": bool or float - Replace background (mask==0) with noise
+                True = always apply, float (0-1) = probability
             - "masked_region_transforms": list of dicts, each with:
-                - "type": "color_jitter"
-                - "target_mask_values": list of int (e.g., [5])
-                - "p": float (probability)
-                - brightness, contrast, saturation, hue (same as A.ColorJitter)
+                - "target_mask_values": list of int (e.g., [4] or [5])
+                - "p": float (probability of applying transform)
+                - "grayscale_prob": float (0-1, prob of grayscale_tint vs random_tint)
+                - "alpha_range": [min, max] for random_tint mode intensity
 
     Returns:
         tuple: (train_transform, eval_transform) - raw albumentations transforms
@@ -381,33 +399,37 @@ def build_image_transformations_albumentations(
             )
         )
 
-    # === Extra augmentations (mask-based and others) ===
+    train_transform = A.ReplayCompose(train_transform_list, p=1.0)
+    
+    # === Mask-based augmentations (applied per-frame, NOT in ReplayCompose) ===
+    # These transforms depend on per-frame mask data and must not be replayed
+    # to ensure each frame uses its own mask
+    mask_transforms = []
     
     # Background noise on mask (replaces mask==0 with random noise)
-    if extra_augmentation_config.get("background_noise_on_mask"):
-        train_transform_list.append(BackgroundNoiseTransform(p=1.0))
+    bg_noise = extra_augmentation_config.get("background_noise_on_mask")
+    if bg_noise:
+        p = bg_noise if isinstance(bg_noise, (int, float)) else 1.0
+        mask_transforms.append(BackgroundNoiseTransform(p=float(p)))
     
-    # Masked region transforms (hue_shift, color_filter, monochrome)
+    # Masked region transforms
     for transform_cfg in extra_augmentation_config.get("masked_region_transforms", []):
-        transform_type = transform_cfg.get("type", "hue_shift")
         target_mask_values = transform_cfg.get("target_mask_values", [])
         p = transform_cfg.get("p", 0.5)
+        grayscale_prob = transform_cfg.get("grayscale_prob", 0.5)
+        alpha_range = tuple(transform_cfg.get("alpha_range", [0.3, 1.0]))
         
-        if transform_type == "color_jitter":
-            train_transform_list.append(
-                MaskedColorJitter(
-                    target_mask_values=target_mask_values,
-                    brightness=transform_cfg.get("brightness", 0.2),
-                    contrast=transform_cfg.get("contrast", 0.2),
-                    saturation=transform_cfg.get("saturation", 0.2),
-                    hue=transform_cfg.get("hue", 0.1),
-                    p=p,
-                )
+        mask_transforms.append(
+            MaskedColorTransform(
+                target_mask_values=target_mask_values,
+                grayscale_prob=grayscale_prob,
+                alpha_range=alpha_range,
+                p=p,
             )
-        else:
-            raise ValueError(f"Unknown masked region transform type: {transform_type}")
-
-    train_transform = A.ReplayCompose(train_transform_list, p=1.0)
+        )
+    
+    # Attach mask transforms to the main transform for use in apply_with_replay
+    train_transform.mask_transforms = mask_transforms if mask_transforms else None
 
     # Evaluation transforms (deterministic, no extra augmentations)
     # Use SmallestMaxSize to preserve aspect ratios, with INTER_AREA for antialiasing

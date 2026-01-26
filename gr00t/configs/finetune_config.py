@@ -66,23 +66,20 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
-    extra_augmentation_config: dict | None = None
+    extra_augmentation_config: str | None = None
     """
-    Unified config for extra image augmentations (mask-based and others).
+    JSON string for extra image augmentations (mask-based and others).
     
-    Example:
-    {
-        "background_noise_on_mask": True,  # Replace mask==0 with noise
-        "masked_region_transforms": [
-            {"type": "hue_shift", "target_mask_values": [5], "p": 0.5},
-            {"type": "color_filter", "target_mask_values": [4], "alpha_range": [0.2, 0.5], "p": 0.3},
-        ]
-    }
+    Example (pass as JSON string):
+    '{"background_noise_on_mask": 0.9, "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "grayscale_prob": 0.5, "alpha_range": [0, 1]}]}'
     
-    Supported masked_region_transforms types:
-      - "hue_shift": Random hue rotation (preserves texture, changes color)
-      - "color_filter": Add semi-transparent color overlay
-      - "monochrome": Convert to grayscale then tint with random color
+    Supported options:
+      - "background_noise_on_mask": bool or float (probability) - Replace mask==0 with noise
+      - "masked_region_transforms": list of dicts with:
+          - "target_mask_values": list of int (e.g., [4] or [5])
+          - "p": float (probability of applying)
+          - "grayscale_prob": float (0-1, prob of grayscale_tint vs random_tint)
+          - "alpha_range": [min, max] for random_tint intensity
     """
 
     # --- Training Configuration ---
