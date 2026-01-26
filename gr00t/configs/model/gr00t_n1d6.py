@@ -54,9 +54,6 @@ class Gr00tN1d6Config(PretrainedConfig):
     #     ]
     # }
     extra_augmentation_config: dict | None = None
-    # Legacy params (for backward compatibility, prefer using extra_augmentation_config)
-    background_noise_on_mask: bool = False
-    masked_color_augment_config: dict | None = None
     formalize_language: bool = True
     apply_sincos_state_encoding: bool = (
         False  # Global flag to enable per-embodiment sin/cos encoding

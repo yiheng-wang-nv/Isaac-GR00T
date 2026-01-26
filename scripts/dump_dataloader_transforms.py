@@ -158,30 +158,12 @@ def build_config_from_args(args: argparse.Namespace) -> Config:
     config.model.random_rotation_angle = args.random_rotation_angle
     config.model.color_jitter_params = parse_color_jitter_params(args.color_jitter_params)
     
-    # Build extra_augmentation_config from args
+    # Parse extra_augmentation_config from JSON string
     import json
-    extra_aug_config = {}
-    if args.background_noise_on_mask:
-        extra_aug_config["background_noise_on_mask"] = True
-    if args.masked_color_augment_config:
-        # Parse JSON and convert to new format
-        parsed = json.loads(args.masked_color_augment_config)
-        extra_aug_config["masked_region_transforms"] = [{
-            "type": parsed.get("mode", "hue_shift"),
-            "target_mask_values": parsed.get("target_mask_values", []),
-            "p": parsed.get("p", 0.5),
-            "hue_shift_range": parsed.get("hue_shift_range", (-180, 180)),
-            "saturation_scale_range": parsed.get("saturation_scale_range", (0.5, 1.5)),
-            "alpha_range": parsed.get("alpha_range", (0.2, 0.5)),
-        }]
     if args.extra_augmentation_config:
-        # Direct JSON config (new way)
-        extra_aug_config.update(json.loads(args.extra_augmentation_config))
-    
-    config.model.extra_augmentation_config = extra_aug_config if extra_aug_config else None
-    # Legacy params (set to False/None since we use extra_augmentation_config)
-    config.model.background_noise_on_mask = False
-    config.model.masked_color_augment_config = None
+        config.model.extra_augmentation_config = json.loads(args.extra_augmentation_config)
+    else:
+        config.model.extra_augmentation_config = None
     
     if args.max_state_dim is not None:
         config.model.max_state_dim = args.max_state_dim
@@ -543,26 +525,11 @@ def main() -> None:
         help="Force enabling albumentations transforms.",
     )
     parser.add_argument(
-        "--background_noise_on_mask",
-        action="store_true",
-        help="Replace background (mask==0) with random noise.",
-    )
-    parser.add_argument(
-        "--masked_color_augment_config",
-        type=str,
-        default=None,
-        help=(
-            "(Legacy) JSON config for masked color augmentation. Example: "
-            '\'{"target_mask_values": [5], "mode": "hue_shift", "p": 0.5}\'. '
-            'Modes: "hue_shift", "color_filter", "monochrome".'
-        ),
-    )
-    parser.add_argument(
         "--extra_augmentation_config",
         type=str,
         default=None,
         help=(
-            "(New) Unified JSON config for extra augmentations. Example: "
+            "JSON config for extra augmentations. Example: "
             '\'{"background_noise_on_mask": true, "masked_region_transforms": '
             '[{"type": "hue_shift", "target_mask_values": [5], "p": 0.5}]}\''
         ),

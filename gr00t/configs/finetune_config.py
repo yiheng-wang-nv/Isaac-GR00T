@@ -84,13 +84,6 @@ class FinetuneConfig:
       - "color_filter": Add semi-transparent color overlay
       - "monochrome": Convert to grayscale then tint with random color
     """
-    
-    # Legacy params (for backward compatibility, prefer using extra_augmentation_config)
-    background_noise_on_mask: bool = False
-    """If True, replace background (mask==0) with random noise before augmentations."""
-
-    masked_color_augment_config: dict | None = None
-    """Legacy param. Use extra_augmentation_config instead."""
 
     # --- Training Configuration ---
     global_batch_size: int = 64

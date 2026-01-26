@@ -128,11 +128,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
         use_albumentations: bool = False,
-        # Extra augmentation config (new unified way)
         extra_augmentation_config: dict | None = None,
-        # Legacy params (for backward compatibility, will be merged into extra_augmentation_config)
-        background_noise_on_mask: bool = False,
-        masked_color_augment_config: dict | None = None,
         use_relative_action: bool = False,
         embodiment_id_mapping: dict[str, int] | None = None,
         transformers_loading_kwargs: dict = {"trust_remote_code": True},
@@ -154,22 +150,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         self.clip_outliers = clip_outliers
         self.apply_sincos_state_encoding = apply_sincos_state_encoding
         self.use_relative_action = use_relative_action
-        
-        # Build extra_augmentation_config (merge legacy params if provided)
-        self.extra_augmentation_config = extra_augmentation_config.copy() if extra_augmentation_config else {}
-        # Backward compatibility: merge legacy params into extra_augmentation_config
-        if background_noise_on_mask and "background_noise_on_mask" not in self.extra_augmentation_config:
-            self.extra_augmentation_config["background_noise_on_mask"] = True
-        if masked_color_augment_config and "masked_region_transforms" not in self.extra_augmentation_config:
-            # Convert old format to new format
-            self.extra_augmentation_config["masked_region_transforms"] = [{
-                "type": masked_color_augment_config.get("mode", "hue_shift"),
-                "target_mask_values": masked_color_augment_config.get("target_mask_values", []),
-                "p": masked_color_augment_config.get("p", 0.5),
-                "hue_shift_range": masked_color_augment_config.get("hue_shift_range", (-180, 180)),
-                "saturation_scale_range": masked_color_augment_config.get("saturation_scale_range", (0.5, 1.5)),
-                "alpha_range": masked_color_augment_config.get("alpha_range", (0.2, 0.5)),
-            }]
+        self.extra_augmentation_config = extra_augmentation_config
 
         # Save VLM settings
         self.formalize_language = formalize_language
@@ -473,130 +454,6 @@ class Gr00tN1d6Processor(BaseProcessor):
         vlm_inputs = self._apply_vlm_processing(stacked_images, language)
         return vlm_inputs, stacked_masks
 
-    @staticmethod
-    def _apply_background_noise(
-        images: list[Image.Image], masks: list[np.ndarray]
-    ) -> list[np.ndarray]:
-        """Replace background (mask == 0) with random noise."""
-        if len(images) != len(masks):
-            raise ValueError(
-                f"Number of masks ({len(masks)}) must match number of images ({len(images)})"
-            )
-        noised_images = []
-        for img, mask in zip(images, masks):
-            img_array = np.array(img)
-            mask_array = np.array(mask)
-            if mask_array.ndim == 3:
-                mask_array = mask_array[..., 0]
-            noise = np.random.randint(0, 256, size=img_array.shape, dtype=np.uint8)
-            background = mask_array == 0
-            img_array[background] = noise[background]
-            noised_images.append(img_array)
-        return noised_images
-
-    @staticmethod
-    def _apply_masked_color_augment(
-        images: list, masks: list[np.ndarray], config: dict
-    ) -> list[np.ndarray]:
-        """Apply color augmentation to specific mask regions.
-        
-        Args:
-            images: List of images (PIL or numpy arrays)
-            masks: List of mask arrays
-            config: Dict with keys:
-                - target_mask_values: List of mask values to augment
-                - mode: "hue_shift", "color_filter", or "monochrome"
-                - p: Probability of applying (default 0.5)
-                - alpha_range: For color_filter mode (default [0.2, 0.5])
-                - hue_shift_range: For hue_shift mode (default [-180, 180])
-                - saturation_scale_range: For hue_shift mode (default [0.5, 1.5])
-        """
-        import cv2
-        
-        if len(images) != len(masks):
-            raise ValueError(
-                f"Number of masks ({len(masks)}) must match number of images ({len(images)})"
-            )
-        
-        target_values = config.get("target_mask_values", [])
-        mode = config.get("mode", "hue_shift")
-        p = config.get("p", 0.5)
-        
-        # Decide once whether to apply (consistent across all images in sequence)
-        if np.random.random() > p:
-            # Return images as numpy arrays without augmentation
-            return [np.array(img) for img in images]
-        
-        # Generate random parameters once for consistency across sequence
-        if mode == "hue_shift":
-            hue_range = config.get("hue_shift_range", [-180, 180])
-            sat_range = config.get("saturation_scale_range", [0.5, 1.5])
-            hue_shift = np.random.uniform(hue_range[0], hue_range[1])
-            sat_scale = np.random.uniform(sat_range[0], sat_range[1])
-        elif mode == "color_filter":
-            alpha_range = config.get("alpha_range", [0.2, 0.5])
-            alpha = np.random.uniform(alpha_range[0], alpha_range[1])
-            random_color = np.array([
-                np.random.randint(0, 256),
-                np.random.randint(0, 256),
-                np.random.randint(0, 256),
-            ], dtype=np.float32)
-        elif mode == "monochrome":
-            random_color = np.array([
-                np.random.randint(0, 256),
-                np.random.randint(0, 256),
-                np.random.randint(0, 256),
-            ], dtype=np.float32)
-        
-        augmented_images = []
-        for img, mask in zip(images, masks):
-            img_array = np.array(img)
-            mask_array = np.array(mask)
-            if mask_array.ndim == 3:
-                mask_array = mask_array[..., 0]
-            
-            # Create combined mask for all target values
-            region_mask = np.zeros(mask_array.shape, dtype=bool)
-            for val in target_values:
-                region_mask |= (mask_array == val)
-            
-            if not region_mask.any():
-                augmented_images.append(img_array)
-                continue
-            
-            result = img_array.copy().astype(np.float32)
-            
-            if mode == "hue_shift":
-                # Convert to HSV and shift hue
-                hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV).astype(np.float32)
-                hsv[region_mask, 0] = (hsv[region_mask, 0] + hue_shift / 2) % 180
-                hsv[region_mask, 1] = np.clip(hsv[region_mask, 1] * sat_scale, 0, 255)
-                hsv = hsv.astype(np.uint8)
-                result = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float32)
-                
-            elif mode == "color_filter":
-                # Add semi-transparent color overlay
-                for c in range(3):
-                    result[region_mask, c] = (
-                        result[region_mask, c] * (1 - alpha) + 
-                        random_color[c] * alpha
-                    )
-                    
-            elif mode == "monochrome":
-                # Convert to grayscale then tint
-                gray = (
-                    0.299 * result[..., 0] + 
-                    0.587 * result[..., 1] + 
-                    0.114 * result[..., 2]
-                )
-                tint = random_color / 255.0
-                for c in range(3):
-                    result[region_mask, c] = gray[region_mask] * tint[c]
-            
-            augmented_images.append(np.clip(result, 0, 255).astype(np.uint8))
-        
-        return augmented_images
-
     def save_pretrained(self, save_directory: str | Path) -> list[Path]:
         # dump modality configs to dict using the recursive function
         save_directory.mkdir(parents=True, exist_ok=True)
@@ -688,9 +545,6 @@ class Gr00tN1d6Processor(BaseProcessor):
         else:
             # Remove training-only augmentation configs when not loading for training
             processor_kwargs.pop("extra_augmentation_config", None)
-            # Legacy params (backward compatibility)
-            processor_kwargs.pop("background_noise_on_mask", None)
-            processor_kwargs.pop("masked_color_augment_config", None)
         # Directly override other processor kwargs
         if kwargs:
             # Override modality configs while keeping pretrained embodiment configs
@@ -702,9 +556,6 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "color_jitter_params",
                 "use_relative_action",
                 "extra_augmentation_config",
-                # Legacy params (backward compatibility)
-                "background_noise_on_mask",
-                "masked_color_augment_config",
             ]
             for key in override_keys:
                 if key in kwargs:
