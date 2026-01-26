@@ -381,34 +381,19 @@ class LeRobotEpisodeLoader:
         return video_data
 
     def _load_mask_file(self, mask_path: Path, indices: np.ndarray) -> np.ndarray:
-        """Load a mask file and return masks at specified indices."""
+        """Load masks from npz file at specified indices."""
         if not mask_path.exists():
             raise FileNotFoundError(f"Mask file does not exist: {mask_path}")
+        if mask_path.suffix.lower() != ".npz":
+            raise ValueError(f"Only .npz mask files are supported: {mask_path}")
 
-        suffix = mask_path.suffix.lower()
-        if suffix == ".npz":
-            npz_data = np.load(mask_path)
-            if "arr_0" in npz_data:
-                masks = npz_data["arr_0"]
-            elif len(npz_data.files) == 1:
-                masks = npz_data[npz_data.files[0]]
-            else:
-                raise ValueError(
-                    f"Mask npz must contain a single array or 'arr_0': {mask_path}"
-                )
-        elif suffix == ".npy":
-            masks = np.load(mask_path)
+        npz_data = np.load(mask_path)
+        if "arr_0" in npz_data:
+            masks = npz_data["arr_0"]
+        elif len(npz_data.files) == 1:
+            masks = npz_data[npz_data.files[0]]
         else:
-            frames = get_frames_by_indices(
-                str(mask_path),
-                indices,
-                video_backend=self.video_backend,
-                video_backend_kwargs=self.video_backend_kwargs or {},
-            )
-            if frames.ndim == 4 and frames.shape[-1] == 3:
-                return frames[..., 0]
-            else:
-                return frames
+            raise ValueError(f"Mask npz must contain a single array or 'arr_0': {mask_path}")
 
         if masks.ndim == 2:
             masks = masks[None, ...]

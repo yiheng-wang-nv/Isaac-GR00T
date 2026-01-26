@@ -8,115 +8,45 @@ import torch
 import torchvision.transforms.v2 as transforms
 
 
-class MaskedRegionColorTransform(A.ImageOnlyTransform):
-    """Apply random color transformation to specific mask regions.
+class MaskedColorJitter(A.ImageOnlyTransform):
+    """Apply ColorJitter only to specific mask regions.
     
-    Two modes:
-    1. monochrome: Convert region to grayscale, then tint with a random color
-    2. color_filter: Add a semi-transparent color overlay to the region
-    
-    Args:
-        target_mask_values: List of mask values to apply the transform to (e.g., [5] or [3, 5])
-        mode: "monochrome" or "color_filter"
-        alpha_range: (min, max) for color overlay intensity (0-1)
-        p: Probability of applying the transform
-    """
-    
-    def __init__(
-        self,
-        target_mask_values: Sequence[int] = (5,),
-        mode: str = "color_filter",
-        alpha_range: tuple[float, float] = (0.2, 0.5),
-        p: float = 0.5,
-        always_apply: bool | None = None,
-    ):
-        super().__init__(p=p, always_apply=always_apply)
-        self.target_mask_values = list(target_mask_values)
-        self.mode = mode
-        self.alpha_range = alpha_range
-        
-        if mode not in ("monochrome", "color_filter"):
-            raise ValueError(f"mode must be 'monochrome' or 'color_filter', got {mode}")
-    
-    def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
-        if mask is None:
-            return img
-        
-        # Create combined mask for all target values
-        region_mask = np.zeros(mask.shape[:2], dtype=bool)
-        for val in self.target_mask_values:
-            region_mask |= (mask == val)
-        
-        if not region_mask.any():
-            return img
-        
-        # Generate random color (RGB)
-        random_color = np.array([
-            np.random.randint(0, 256),
-            np.random.randint(0, 256),
-            np.random.randint(0, 256),
-        ], dtype=np.float32)
-        
-        result = img.copy().astype(np.float32)
-        
-        if self.mode == "monochrome":
-            # Convert region to grayscale, then tint with random color
-            # Grayscale using luminance weights
-            gray = (
-                0.299 * result[..., 0] + 
-                0.587 * result[..., 1] + 
-                0.114 * result[..., 2]
-            )
-            # Normalize color to create tint
-            tint = random_color / 255.0
-            # Apply tint to grayscale
-            for c in range(3):
-                result[region_mask, c] = gray[region_mask] * tint[c]
-        
-        elif self.mode == "color_filter":
-            # Add semi-transparent color overlay
-            alpha = np.random.uniform(self.alpha_range[0], self.alpha_range[1])
-            for c in range(3):
-                result[region_mask, c] = (
-                    result[region_mask, c] * (1 - alpha) + 
-                    random_color[c] * alpha
-                )
-        
-        return np.clip(result, 0, 255).astype(np.uint8)
-    
-    def get_params_dependent_on_data(self, params, data) -> dict:
-        # Pass mask through to apply()
-        return {"mask": data.get("mask")}
-    
-    def get_transform_init_args_names(self) -> tuple[str, ...]:
-        return ("target_mask_values", "mode", "alpha_range")
-
-
-class MaskedRegionRandomHue(A.ImageOnlyTransform):
-    """Apply random hue shift to specific mask regions.
-    
-    This is useful for changing the color of objects (like floor, shelf) 
-    while preserving their texture and brightness.
+    This wraps Albumentations ColorJitter but only applies it to pixels
+    matching the target mask values.
     
     Args:
         target_mask_values: List of mask values to apply the transform to
-        hue_shift_range: (min, max) hue shift in degrees (-180 to 180)
-        saturation_scale_range: (min, max) saturation multiplier
+        brightness: ColorJitter brightness range
+        contrast: ColorJitter contrast range
+        saturation: ColorJitter saturation range
+        hue: ColorJitter hue range
         p: Probability of applying the transform
     """
     
     def __init__(
         self,
         target_mask_values: Sequence[int] = (5,),
-        hue_shift_range: tuple[float, float] = (-180, 180),
-        saturation_scale_range: tuple[float, float] = (0.5, 1.5),
+        brightness: float = 0.2,
+        contrast: float = 0.2,
+        saturation: float = 0.2,
+        hue: float = 0.1,
         p: float = 0.5,
         always_apply: bool | None = None,
     ):
         super().__init__(p=p, always_apply=always_apply)
         self.target_mask_values = list(target_mask_values)
-        self.hue_shift_range = hue_shift_range
-        self.saturation_scale_range = saturation_scale_range
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+        # Internal ColorJitter (always apply, we control p at outer level)
+        self._jitter = A.ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,
+            p=1.0,
+        )
     
     def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
         if mask is None:
@@ -130,22 +60,12 @@ class MaskedRegionRandomHue(A.ImageOnlyTransform):
         if not region_mask.any():
             return img
         
+        # Apply ColorJitter to entire image
+        jittered = self._jitter(image=img)["image"]
+        
+        # Only keep jittered pixels in masked region
         result = img.copy()
-        
-        # Convert to HSV
-        hsv = cv2.cvtColor(result, cv2.COLOR_RGB2HSV).astype(np.float32)
-        
-        # Random hue shift
-        hue_shift = np.random.uniform(self.hue_shift_range[0], self.hue_shift_range[1])
-        hsv[region_mask, 0] = (hsv[region_mask, 0] + hue_shift / 2) % 180  # OpenCV hue is 0-180
-        
-        # Random saturation scale
-        sat_scale = np.random.uniform(self.saturation_scale_range[0], self.saturation_scale_range[1])
-        hsv[region_mask, 1] = np.clip(hsv[region_mask, 1] * sat_scale, 0, 255)
-        
-        # Convert back to RGB
-        hsv = hsv.astype(np.uint8)
-        result = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+        result[region_mask] = jittered[region_mask]
         
         return result
     
@@ -153,7 +73,7 @@ class MaskedRegionRandomHue(A.ImageOnlyTransform):
         return {"mask": data.get("mask")}
     
     def get_transform_init_args_names(self) -> tuple[str, ...]:
-        return ("target_mask_values", "hue_shift_range", "saturation_scale_range")
+        return ("target_mask_values", "brightness", "contrast", "saturation", "hue")
 
 
 class BackgroundNoiseTransform(A.ImageOnlyTransform):
@@ -190,61 +110,12 @@ class BackgroundNoiseTransform(A.ImageOnlyTransform):
         return ()
 
 
-def apply_with_replay(transform, images, replay=None):
+def apply_with_replay(transform, images, masks=None, replay=None):
     """
-    Apply albumentations transforms to multiple images with replay functionality.
-
-    Args:
-        transform: Albumentations ReplayCompose or Compose transform
-        images: List of PIL Images to transform
-        replay: Optional replay data for consistent transforms. If None, creates new replay.
-
-    Returns:
-        tuple: (transformed_tensors_list, replay_data)
-            - transformed_tensors_list: List of transformed torch tensors (C, H, W) as uint8
-            - replay_data: Replay data for consistent transforms across images (None for regular Compose)
-    """
-    transformed_tensors = []
-    current_replay = replay
-
-    # Check if transform supports replay (ReplayCompose)
-    has_replay = hasattr(transform, "replay")
-
-    for img in images:
-        if has_replay:
-            if current_replay is None:
-                # First image - create replay data
-                augmented_image = transform(image=np.array(img))
-                current_replay = augmented_image["replay"]
-            else:
-                # Subsequent images - use replay for consistent transforms
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=UserWarning)
-                    augmented_image = transform.replay(
-                        image=np.array(img), saved_augmentations=current_replay
-                    )
-            img_array = augmented_image["image"]
-        else:
-            # Regular Compose transform - no replay functionality
-            augmented_image = transform(image=np.array(img))
-            img_array = augmented_image["image"]
-
-        # Convert to uint8 if needed (albumentations may return float32 in [0,1])
-        if img_array.dtype == np.float32:
-            img_array = (img_array * 255).astype(np.uint8)
-        elif img_array.dtype != np.uint8:
-            raise ValueError(f"Unexpected data type: {img_array.dtype}")
-
-        # Convert to torch tensor (C, H, W) as uint8
-        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1)
-        transformed_tensors.append(img_tensor)
-
-    return transformed_tensors, current_replay
-
-
-def apply_with_replay_and_mask(transform, images, masks=None, replay=None):
-    """
-    Apply albumentations transforms to images and masks with replay functionality.
+    Apply albumentations transforms to images (and optionally masks) with replay functionality.
+    
+    Replay ensures consistent random augmentation parameters across all images in a sequence,
+    which is critical for temporal consistency in video/trajectory data.
 
     Args:
         transform: Albumentations ReplayCompose or Compose transform
@@ -255,7 +126,7 @@ def apply_with_replay_and_mask(transform, images, masks=None, replay=None):
     Returns:
         tuple: (transformed_images, transformed_masks, replay_data)
             - transformed_images: List of transformed torch tensors (C, H, W) as uint8
-            - transformed_masks: List of transformed torch tensors (H, W) or None
+            - transformed_masks: List of transformed torch tensors (H, W) or None if masks not provided
             - replay_data: Replay data for consistent transforms across images
     """
     transformed_images = []
@@ -283,12 +154,16 @@ def apply_with_replay_and_mask(transform, images, masks=None, replay=None):
                     augmented = transform(image=img_array)
                 current_replay = augmented["replay"]
             else:
-                if mask_array is not None:
-                    augmented = transform.replay(
-                        image=img_array, mask=mask_array, saved_augmentations=current_replay
-                    )
-                else:
-                    augmented = transform.replay(image=img_array, saved_augmentations=current_replay)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    if mask_array is not None:
+                        augmented = transform.replay(
+                            image=img_array, mask=mask_array, saved_augmentations=current_replay
+                        )
+                    else:
+                        augmented = transform.replay(
+                            image=img_array, saved_augmentations=current_replay
+                        )
         else:
             if mask_array is not None:
                 augmented = transform(image=img_array, mask=mask_array)
@@ -461,10 +336,10 @@ def build_image_transformations_albumentations(
         extra_augmentation_config: Optional dict for additional augmentations. Supported keys:
             - "background_noise_on_mask": bool - Replace background (mask==0) with noise
             - "masked_region_transforms": list of dicts, each with:
-                - "type": "hue_shift" | "color_filter" | "monochrome"
+                - "type": "color_jitter"
                 - "target_mask_values": list of int (e.g., [5])
                 - "p": float (probability)
-                - Additional params based on type (hue_shift_range, alpha_range, etc.)
+                - brightness, contrast, saturation, hue (same as A.ColorJitter)
 
     Returns:
         tuple: (train_transform, eval_transform) - raw albumentations transforms
@@ -518,21 +393,14 @@ def build_image_transformations_albumentations(
         target_mask_values = transform_cfg.get("target_mask_values", [])
         p = transform_cfg.get("p", 0.5)
         
-        if transform_type == "hue_shift":
+        if transform_type == "color_jitter":
             train_transform_list.append(
-                MaskedRegionRandomHue(
+                MaskedColorJitter(
                     target_mask_values=target_mask_values,
-                    hue_shift_range=transform_cfg.get("hue_shift_range", (-180, 180)),
-                    saturation_scale_range=transform_cfg.get("saturation_scale_range", (0.5, 1.5)),
-                    p=p,
-                )
-            )
-        elif transform_type in ("color_filter", "monochrome"):
-            train_transform_list.append(
-                MaskedRegionColorTransform(
-                    target_mask_values=target_mask_values,
-                    mode=transform_type,
-                    alpha_range=transform_cfg.get("alpha_range", (0.2, 0.5)),
+                    brightness=transform_cfg.get("brightness", 0.2),
+                    contrast=transform_cfg.get("contrast", 0.2),
+                    saturation=transform_cfg.get("saturation", 0.2),
+                    hue=transform_cfg.get("hue", 0.1),
                     p=p,
                 )
             )

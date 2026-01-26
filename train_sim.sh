@@ -31,25 +31,12 @@ CUDA_VISIBLE_DEVICES=2 python gr00t/experiment/launch_finetune.py \
     --dataloader_num_workers 8 \
     --background-noise-on-mask
 
-# visualize the noise transform
-python /localhome/local-vennw/code/Isaac-GR00T/scripts/dump_dataloader_transforms.py \
+# debug
+python scripts/dump_dataloader_transforms.py \
   --dataset_path /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_3_cosmos/lerobot/ \
   --embodiment_tag NEW_EMBODIMENT \
   --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
-  --background_noise_on_mask \
-  --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_dataloader_transforms \
+  --extra_augmentation_config '{"background_noise_on_mask": true}' \
+  --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_background_noise_on_mask \
   --save_video \
-  --video_side_by_side \
-  --video_fps 20
-
-# do hue shift on mask=5
-python /localhome/local-vennw/code/Isaac-GR00T/scripts/dump_dataloader_transforms.py \
-  --dataset_path /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_3_cosmos/lerobot/ \
-  --embodiment_tag NEW_EMBODIMENT \
-  --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
-  --background_noise_on_mask \
-  --masked_color_augment_config '{"target_mask_values": [5], "mode": "hue_shift", "p": 1.0}' \
-  --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_hue_shift_on_mask5 \
-  --save_video \
-  --video_side_by_side \
-  --video_fps 20
+  --video_side_by_side

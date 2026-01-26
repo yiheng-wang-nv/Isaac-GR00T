@@ -21,7 +21,6 @@ from transformers.utils import cached_file
 
 from .image_augmentations import (
     apply_with_replay,
-    apply_with_replay_and_mask,
     build_image_transformations,
     build_image_transformations_albumentations,
 )
@@ -415,7 +414,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                 
                 # Apply transforms with replay for consistency
                 # Note: background_noise, masked_region_transforms etc. are now in the pipeline
-                transformed_images, transformed_masks, replay = apply_with_replay_and_mask(
+                transformed_images, transformed_masks, replay = apply_with_replay(
                     image_transform, view_images, view_masks, replay
                 )
                 temporal_stacked_images[view] = torch.stack(transformed_images)  # (T, C, H, W)
