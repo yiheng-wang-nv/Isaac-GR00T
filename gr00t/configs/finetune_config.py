@@ -66,8 +66,31 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
+    extra_augmentation_config: dict | None = None
+    """
+    Unified config for extra image augmentations (mask-based and others).
+    
+    Example:
+    {
+        "background_noise_on_mask": True,  # Replace mask==0 with noise
+        "masked_region_transforms": [
+            {"type": "hue_shift", "target_mask_values": [5], "p": 0.5},
+            {"type": "color_filter", "target_mask_values": [4], "alpha_range": [0.2, 0.5], "p": 0.3},
+        ]
+    }
+    
+    Supported masked_region_transforms types:
+      - "hue_shift": Random hue rotation (preserves texture, changes color)
+      - "color_filter": Add semi-transparent color overlay
+      - "monochrome": Convert to grayscale then tint with random color
+    """
+    
+    # Legacy params (for backward compatibility, prefer using extra_augmentation_config)
     background_noise_on_mask: bool = False
     """If True, replace background (mask==0) with random noise before augmentations."""
+
+    masked_color_augment_config: dict | None = None
+    """Legacy param. Use extra_augmentation_config instead."""
 
     # --- Training Configuration ---
     global_batch_size: int = 64

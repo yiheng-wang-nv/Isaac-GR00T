@@ -16,6 +16,8 @@ import torch
 import torch.distributed as dist
 from PIL import Image
 from PIL import ImageOps
+import imageio.v2 as imageio
+import cv2
 
 from gr00t.configs.base_config import Config, get_default_config
 from gr00t.data.embodiment_tags import EmbodimentTag
@@ -123,7 +125,7 @@ def build_processor(config: Config) -> Gr00tN1d6Processor:
         apply_sincos_state_encoding=config.model.apply_sincos_state_encoding,
         max_action_horizon=config.model.action_horizon,
         use_albumentations=config.model.use_albumentations_transforms,
-        background_noise_on_mask=config.model.background_noise_on_mask,
+        extra_augmentation_config=config.model.extra_augmentation_config,
         shortest_image_edge=config.model.shortest_image_edge,
         crop_fraction=config.model.crop_fraction,
         use_relative_action=config.model.use_relative_action,
@@ -155,14 +157,39 @@ def build_config_from_args(args: argparse.Namespace) -> Config:
 
     config.model.random_rotation_angle = args.random_rotation_angle
     config.model.color_jitter_params = parse_color_jitter_params(args.color_jitter_params)
-    config.model.background_noise_on_mask = args.background_noise_on_mask
+    
+    # Build extra_augmentation_config from args
+    import json
+    extra_aug_config = {}
+    if args.background_noise_on_mask:
+        extra_aug_config["background_noise_on_mask"] = True
+    if args.masked_color_augment_config:
+        # Parse JSON and convert to new format
+        parsed = json.loads(args.masked_color_augment_config)
+        extra_aug_config["masked_region_transforms"] = [{
+            "type": parsed.get("mode", "hue_shift"),
+            "target_mask_values": parsed.get("target_mask_values", []),
+            "p": parsed.get("p", 0.5),
+            "hue_shift_range": parsed.get("hue_shift_range", (-180, 180)),
+            "saturation_scale_range": parsed.get("saturation_scale_range", (0.5, 1.5)),
+            "alpha_range": parsed.get("alpha_range", (0.2, 0.5)),
+        }]
+    if args.extra_augmentation_config:
+        # Direct JSON config (new way)
+        extra_aug_config.update(json.loads(args.extra_augmentation_config))
+    
+    config.model.extra_augmentation_config = extra_aug_config if extra_aug_config else None
+    # Legacy params (set to False/None since we use extra_augmentation_config)
+    config.model.background_noise_on_mask = False
+    config.model.masked_color_augment_config = None
+    
     if args.max_state_dim is not None:
         config.model.max_state_dim = args.max_state_dim
     if args.max_action_dim is not None:
         config.model.max_action_dim = args.max_action_dim
     if args.use_albumentations_transforms is not None:
         config.model.use_albumentations_transforms = args.use_albumentations_transforms
-    if config.model.background_noise_on_mask:
+    if config.model.extra_augmentation_config:
         config.model.use_albumentations_transforms = True
 
     config.model.load_bf16 = False
@@ -274,6 +301,158 @@ def _compare_original_vs_transformed(
     return _stack_rows(rows)
 
 
+def _write_video(
+    frames: list[Image.Image],
+    output_path: Path,
+    fps: int,
+    side_by_side: bool = False,
+    originals: list[Image.Image] | None = None,
+    codec: str = "libx264",
+) -> None:
+    def to_rgb_array(item: Image.Image | np.ndarray) -> np.ndarray:
+        if isinstance(item, Image.Image):
+            item = ImageOps.exif_transpose(item).convert("RGB")
+            arr = np.asarray(item)
+        else:
+            if isinstance(item, torch.Tensor):
+                arr = item.detach().cpu().numpy()
+            else:
+                arr = np.asarray(item)
+            if arr.ndim == 2:
+                arr = np.stack([arr] * 3, axis=-1)
+            elif arr.ndim == 3 and arr.shape[0] in (1, 3) and arr.shape[-1] not in (1, 3):
+                arr = np.transpose(arr, (1, 2, 0))
+                if arr.shape[2] == 1:
+                    arr = np.repeat(arr, 3, axis=2)
+            if arr.dtype != np.uint8:
+                if arr.max() <= 1.0:
+                    arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
+                else:
+                    arr = arr.clip(0, 255).astype(np.uint8)
+            if arr.ndim != 3 or arr.shape[2] != 3:
+                try:
+                    arr = np.asarray(Image.fromarray(arr.squeeze()).convert("RGB"))
+                except Exception:
+                    if arr.ndim == 1 and arr.size % 3 == 0:
+                        arr = arr.reshape(-1, 3)
+                        arr = np.stack([arr] * 3, axis=-1)
+                    else:
+                        raise
+        arr = np.ascontiguousarray(arr)
+        return arr
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Get first frame to determine video size
+    first_arr = to_rgb_array(frames[0])
+    if side_by_side and originals:
+        first_orig = to_rgb_array(originals[0])
+        first_orig_img = Image.fromarray(first_orig)
+        first_img = Image.fromarray(first_arr)
+        first_orig_img = _resize_to_match(first_orig_img, first_img)
+        width = first_orig_img.width + first_img.width
+        height = max(first_orig_img.height, first_img.height)
+    else:
+        height, width = first_arr.shape[:2]
+
+    # Use cv2 for more reliable video writing
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+
+    for idx, frame in enumerate(frames):
+        frame_arr = to_rgb_array(frame)
+        if side_by_side:
+            if originals is None or idx >= len(originals):
+                continue
+            orig_arr = to_rgb_array(originals[idx])
+            orig_img = Image.fromarray(orig_arr)
+            frame_img = Image.fromarray(frame_arr)
+            orig_img = _resize_to_match(orig_img, frame_img)
+            combined = Image.new(
+                "RGB",
+                (orig_img.width + frame_img.width, max(orig_img.height, frame_img.height)),
+                (0, 0, 0),
+            )
+            combined.paste(orig_img, (0, 0))
+            combined.paste(frame_img, (orig_img.width, 0))
+            frame_arr = np.asarray(combined)
+        # cv2 expects BGR, convert from RGB
+        frame_bgr = cv2.cvtColor(frame_arr, cv2.COLOR_RGB2BGR)
+        writer.write(frame_bgr)
+
+    writer.release()
+
+
+def save_video_from_episode(
+    config: Config,
+    output_dir: Path,
+    dataset_index: int,
+    episode_index: int,
+    view: str | None,
+    fps: int,
+    side_by_side: bool,
+    output_name: str | None,
+) -> None:
+    processor = build_processor(config)
+    processor.train()
+
+    dataset_spec = config.data.datasets[0]
+    dataset_paths = dataset_spec.dataset_paths
+    if dataset_index < 0 or dataset_index >= len(dataset_paths):
+        raise ValueError(f"dataset_index {dataset_index} out of range (0..{len(dataset_paths)-1})")
+    dataset_path = dataset_paths[dataset_index]
+
+    embodiment_tag = EmbodimentTag(dataset_spec.embodiment_tag)
+    modality_cfg = config.data.modality_configs[embodiment_tag.value]
+    image_keys = modality_cfg["video"].modality_keys
+    if not image_keys:
+        raise ValueError("No video modality keys found.")
+    view = view or image_keys[0]
+    if view not in image_keys:
+        raise ValueError(f"View '{view}' not in modality config: {image_keys}")
+
+    loader = LeRobotEpisodeLoader(
+        dataset_path=dataset_path,
+        modality_configs=modality_cfg,
+        video_backend=config.data.video_backend,
+    )
+    df = loader[episode_index]
+    if df.empty:
+        raise ValueError(f"Episode {episode_index} is empty.")
+    original_images = list(df[f"video.{view}"].values)
+    view_masks = None
+    mask_col = f"mask.{view}"
+    if mask_col in df.columns:
+        view_masks = list(df[mask_col].values)
+
+    images_dict = {view: original_images}
+    masks_dict = {view: view_masks} if view_masks is not None else None
+
+    vlm_inputs, _ = processor._get_vlm_inputs(
+        image_keys=[view],
+        images=images_dict,
+        masks=masks_dict,
+        image_transform=processor.train_image_transform,
+        language="",
+    )
+    transformed_images = vlm_inputs["vlm_content"]["images"]
+    print(f"Processing {len(transformed_images)} frames...")
+
+    dataset_path_obj = Path(dataset_path)
+    dataset_name = f"{dataset_path_obj.parent.name}_{dataset_path_obj.name}"
+    view_tag = view.replace(".", "_")
+    default_name = f"{dataset_name}_episode_{episode_index:06d}_{view_tag}_noised.mp4"
+    output_path = output_dir / (output_name or default_name)
+    _write_video(
+        frames=transformed_images,
+        output_path=output_path,
+        fps=fps,
+        side_by_side=side_by_side,
+        originals=original_images if side_by_side else None,
+    )
+    print(f"Saved video to {output_path.resolve()}")
+
+
 def save_comparison_per_dataset(
     config: Config,
     output_dir: Path,
@@ -368,6 +547,26 @@ def main() -> None:
         action="store_true",
         help="Replace background (mask==0) with random noise.",
     )
+    parser.add_argument(
+        "--masked_color_augment_config",
+        type=str,
+        default=None,
+        help=(
+            "(Legacy) JSON config for masked color augmentation. Example: "
+            '\'{"target_mask_values": [5], "mode": "hue_shift", "p": 0.5}\'. '
+            'Modes: "hue_shift", "color_filter", "monochrome".'
+        ),
+    )
+    parser.add_argument(
+        "--extra_augmentation_config",
+        type=str,
+        default=None,
+        help=(
+            "(New) Unified JSON config for extra augmentations. Example: "
+            '\'{"background_noise_on_mask": true, "masked_region_transforms": '
+            '[{"type": "hue_shift", "target_mask_values": [5], "p": 0.5}]}\''
+        ),
+    )
     parser.add_argument("--max_state_dim", type=int, default=None)
     parser.add_argument("--max_action_dim", type=int, default=None)
     parser.add_argument(
@@ -386,6 +585,17 @@ def main() -> None:
         required=True,
         help="Output directory for saved samples.",
     )
+    parser.add_argument("--save_video", action="store_true", help="Save a full transformed video.")
+    parser.add_argument("--video_dataset_index", type=int, default=0, help="Dataset index for video.")
+    parser.add_argument("--video_episode_index", type=int, default=0, help="Episode index for video.")
+    parser.add_argument("--video_view", type=str, default=None, help="Camera view for video.")
+    parser.add_argument("--video_fps", type=int, default=20, help="FPS for output video.")
+    parser.add_argument(
+        "--video_side_by_side",
+        action="store_true",
+        help="Output side-by-side original vs transformed video.",
+    )
+    parser.add_argument("--video_output_name", type=str, default=None, help="Output video file name.")
     parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -397,6 +607,17 @@ def main() -> None:
             config = load_config(config_path)
             run_name = config.training.output_dir.split("/")[-1]
             out_dir = output_root / run_name
+            if args.save_video:
+                save_video_from_episode(
+                    config=config,
+                    output_dir=out_dir,
+                    dataset_index=args.video_dataset_index,
+                    episode_index=args.video_episode_index,
+                    view=args.video_view,
+                    fps=args.video_fps,
+                    side_by_side=args.video_side_by_side,
+                    output_name=args.video_output_name,
+                )
             if args.comparison_per_dataset:
                 save_comparison_per_dataset(
                     config, out_dir, episode_index=args.comparison_episode_index
@@ -418,6 +639,17 @@ def main() -> None:
     config = build_config_from_args(args)
     run_name = "preview_from_args"
     out_dir = output_root / run_name
+    if args.save_video:
+        save_video_from_episode(
+            config=config,
+            output_dir=out_dir,
+            dataset_index=args.video_dataset_index,
+            episode_index=args.video_episode_index,
+            view=args.video_view,
+            fps=args.video_fps,
+            side_by_side=args.video_side_by_side,
+            output_name=args.video_output_name,
+        )
     if args.comparison_per_dataset:
         save_comparison_per_dataset(
             config, out_dir, episode_index=args.comparison_episode_index

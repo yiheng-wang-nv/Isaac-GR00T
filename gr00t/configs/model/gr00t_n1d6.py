@@ -45,8 +45,18 @@ class Gr00tN1d6Config(PretrainedConfig):
     random_rotation_angle: int | None = None
     color_jitter_params: dict[str, float] | None = None
     use_albumentations_transforms: bool = True
-    # If True, replace background (mask==0) with random noise before augmentations.
+    # Extra augmentation config (unified way to configure all extra augmentations)
+    # Example:
+    # {
+    #     "background_noise_on_mask": True,
+    #     "masked_region_transforms": [
+    #         {"type": "hue_shift", "target_mask_values": [5], "p": 0.5},
+    #     ]
+    # }
+    extra_augmentation_config: dict | None = None
+    # Legacy params (for backward compatibility, prefer using extra_augmentation_config)
     background_noise_on_mask: bool = False
+    masked_color_augment_config: dict | None = None
     formalize_language: bool = True
     apply_sincos_state_encoding: bool = (
         False  # Global flag to enable per-embodiment sin/cos encoding

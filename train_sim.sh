@@ -5,7 +5,6 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate gr00t
 
 DATASET_PATH=/localhome/local-vennw/code/orca-sim-pick-and-place-mimic
-
 CUDA_VISIBLE_DEVICES=2 python gr00t/experiment/launch_finetune.py \
     --base_model_path nvidia/GR00T-N1.6-3B \
     --dataset_path  \
@@ -16,10 +15,10 @@ CUDA_VISIBLE_DEVICES=2 python gr00t/experiment/launch_finetune.py \
    --embodiment_tag NEW_EMBODIMENT \
     --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py  \
     --num_gpus 1 \
-    --output_dir /localhome/local-vennw/code/Isaac-GR00T/outputs/sim_stage1 \
+    --output_dir /localhome/local-vennw/code/Isaac-GR00T/outputs/sim_stage1_100k \
     --save_steps 10000 \
     --save_total_limit 5 \
-    --max_steps 20000 \
+    --max_steps 100000 \
     --warmup_ratio 0.05 \
     --weight_decay 1e-5 \
     --learning_rate 1e-4 \
@@ -34,15 +33,23 @@ CUDA_VISIBLE_DEVICES=2 python gr00t/experiment/launch_finetune.py \
 
 # visualize the noise transform
 python /localhome/local-vennw/code/Isaac-GR00T/scripts/dump_dataloader_transforms.py \
-  --dataset_path \
-    /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_3_cosmos/lerobot/ \
-    /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_5_cosmos/lerobot/ \
-    /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_7_cosmos/lerobot/ \
-    /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_8_cosmos/lerobot/ \
+  --dataset_path /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_3_cosmos/lerobot/ \
   --embodiment_tag NEW_EMBODIMENT \
   --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
   --background_noise_on_mask \
-  --color_jitter_params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
   --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_dataloader_transforms \
-  --comparison_per_dataset \
-  --comparison_episode_index 0
+  --save_video \
+  --video_side_by_side \
+  --video_fps 20
+
+# do hue shift on mask=5
+python /localhome/local-vennw/code/Isaac-GR00T/scripts/dump_dataloader_transforms.py \
+  --dataset_path /localhome/local-vennw/code/orca-sim-pick-and-place-mimic/stage1_3_cosmos/lerobot/ \
+  --embodiment_tag NEW_EMBODIMENT \
+  --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
+  --background_noise_on_mask \
+  --masked_color_augment_config '{"target_mask_values": [5], "mode": "hue_shift", "p": 1.0}' \
+  --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_hue_shift_on_mask5 \
+  --save_video \
+  --video_side_by_side \
+  --video_fps 20

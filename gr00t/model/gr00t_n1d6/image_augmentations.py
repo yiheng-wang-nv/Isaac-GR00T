@@ -1,10 +1,193 @@
 import warnings
+from typing import Sequence
 
 import albumentations as A
 import cv2
 import numpy as np
 import torch
 import torchvision.transforms.v2 as transforms
+
+
+class MaskedRegionColorTransform(A.ImageOnlyTransform):
+    """Apply random color transformation to specific mask regions.
+    
+    Two modes:
+    1. monochrome: Convert region to grayscale, then tint with a random color
+    2. color_filter: Add a semi-transparent color overlay to the region
+    
+    Args:
+        target_mask_values: List of mask values to apply the transform to (e.g., [5] or [3, 5])
+        mode: "monochrome" or "color_filter"
+        alpha_range: (min, max) for color overlay intensity (0-1)
+        p: Probability of applying the transform
+    """
+    
+    def __init__(
+        self,
+        target_mask_values: Sequence[int] = (5,),
+        mode: str = "color_filter",
+        alpha_range: tuple[float, float] = (0.2, 0.5),
+        p: float = 0.5,
+        always_apply: bool | None = None,
+    ):
+        super().__init__(p=p, always_apply=always_apply)
+        self.target_mask_values = list(target_mask_values)
+        self.mode = mode
+        self.alpha_range = alpha_range
+        
+        if mode not in ("monochrome", "color_filter"):
+            raise ValueError(f"mode must be 'monochrome' or 'color_filter', got {mode}")
+    
+    def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
+        if mask is None:
+            return img
+        
+        # Create combined mask for all target values
+        region_mask = np.zeros(mask.shape[:2], dtype=bool)
+        for val in self.target_mask_values:
+            region_mask |= (mask == val)
+        
+        if not region_mask.any():
+            return img
+        
+        # Generate random color (RGB)
+        random_color = np.array([
+            np.random.randint(0, 256),
+            np.random.randint(0, 256),
+            np.random.randint(0, 256),
+        ], dtype=np.float32)
+        
+        result = img.copy().astype(np.float32)
+        
+        if self.mode == "monochrome":
+            # Convert region to grayscale, then tint with random color
+            # Grayscale using luminance weights
+            gray = (
+                0.299 * result[..., 0] + 
+                0.587 * result[..., 1] + 
+                0.114 * result[..., 2]
+            )
+            # Normalize color to create tint
+            tint = random_color / 255.0
+            # Apply tint to grayscale
+            for c in range(3):
+                result[region_mask, c] = gray[region_mask] * tint[c]
+        
+        elif self.mode == "color_filter":
+            # Add semi-transparent color overlay
+            alpha = np.random.uniform(self.alpha_range[0], self.alpha_range[1])
+            for c in range(3):
+                result[region_mask, c] = (
+                    result[region_mask, c] * (1 - alpha) + 
+                    random_color[c] * alpha
+                )
+        
+        return np.clip(result, 0, 255).astype(np.uint8)
+    
+    def get_params_dependent_on_data(self, params, data) -> dict:
+        # Pass mask through to apply()
+        return {"mask": data.get("mask")}
+    
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("target_mask_values", "mode", "alpha_range")
+
+
+class MaskedRegionRandomHue(A.ImageOnlyTransform):
+    """Apply random hue shift to specific mask regions.
+    
+    This is useful for changing the color of objects (like floor, shelf) 
+    while preserving their texture and brightness.
+    
+    Args:
+        target_mask_values: List of mask values to apply the transform to
+        hue_shift_range: (min, max) hue shift in degrees (-180 to 180)
+        saturation_scale_range: (min, max) saturation multiplier
+        p: Probability of applying the transform
+    """
+    
+    def __init__(
+        self,
+        target_mask_values: Sequence[int] = (5,),
+        hue_shift_range: tuple[float, float] = (-180, 180),
+        saturation_scale_range: tuple[float, float] = (0.5, 1.5),
+        p: float = 0.5,
+        always_apply: bool | None = None,
+    ):
+        super().__init__(p=p, always_apply=always_apply)
+        self.target_mask_values = list(target_mask_values)
+        self.hue_shift_range = hue_shift_range
+        self.saturation_scale_range = saturation_scale_range
+    
+    def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
+        if mask is None:
+            return img
+        
+        # Create combined mask for all target values
+        region_mask = np.zeros(mask.shape[:2], dtype=bool)
+        for val in self.target_mask_values:
+            region_mask |= (mask == val)
+        
+        if not region_mask.any():
+            return img
+        
+        result = img.copy()
+        
+        # Convert to HSV
+        hsv = cv2.cvtColor(result, cv2.COLOR_RGB2HSV).astype(np.float32)
+        
+        # Random hue shift
+        hue_shift = np.random.uniform(self.hue_shift_range[0], self.hue_shift_range[1])
+        hsv[region_mask, 0] = (hsv[region_mask, 0] + hue_shift / 2) % 180  # OpenCV hue is 0-180
+        
+        # Random saturation scale
+        sat_scale = np.random.uniform(self.saturation_scale_range[0], self.saturation_scale_range[1])
+        hsv[region_mask, 1] = np.clip(hsv[region_mask, 1] * sat_scale, 0, 255)
+        
+        # Convert back to RGB
+        hsv = hsv.astype(np.uint8)
+        result = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+        
+        return result
+    
+    def get_params_dependent_on_data(self, params, data) -> dict:
+        return {"mask": data.get("mask")}
+    
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("target_mask_values", "hue_shift_range", "saturation_scale_range")
+
+
+class BackgroundNoiseTransform(A.ImageOnlyTransform):
+    """Replace background (mask == 0) with random noise.
+    
+    This transform replaces pixels where mask value is 0 with random RGB noise,
+    useful for domain randomization in sim-to-real transfer.
+    
+    Args:
+        p: Probability of applying the transform
+    """
+    
+    def __init__(self, p: float = 1.0, always_apply: bool | None = None):
+        super().__init__(p=p, always_apply=always_apply)
+    
+    def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
+        if mask is None:
+            return img
+        
+        result = img.copy()
+        mask_2d = mask[..., 0] if mask.ndim == 3 else mask
+        background = mask_2d == 0
+        
+        if background.any():
+            noise = np.random.randint(0, 256, size=result.shape, dtype=np.uint8)
+            result[background] = noise[background]
+        
+        return result
+    
+    def get_params_dependent_on_data(self, params, data) -> dict:
+        return {"mask": data.get("mask")}
+    
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ()
 
 
 def apply_with_replay(transform, images, replay=None):
@@ -263,6 +446,7 @@ def build_image_transformations_albumentations(
     color_jitter_params,
     shortest_image_edge,
     crop_fraction,
+    extra_augmentation_config: dict | None = None,
 ):
     """
     Build albumentations-based image transformations equivalent to the torchvision version.
@@ -272,6 +456,15 @@ def build_image_transformations_albumentations(
         image_crop_size: Size for cropping (list of [height, width])
         random_rotation_angle: Maximum rotation angle in degrees (0 for no rotation)
         color_jitter_params: Dictionary with color jitter parameters (brightness, contrast, saturation, hue)
+        shortest_image_edge: Shortest edge size for resizing
+        crop_fraction: Fraction of image to crop
+        extra_augmentation_config: Optional dict for additional augmentations. Supported keys:
+            - "background_noise_on_mask": bool - Replace background (mask==0) with noise
+            - "masked_region_transforms": list of dicts, each with:
+                - "type": "hue_shift" | "color_filter" | "monochrome"
+                - "target_mask_values": list of int (e.g., [5])
+                - "p": float (probability)
+                - Additional params based on type (hue_shift_range, alpha_range, etc.)
 
     Returns:
         tuple: (train_transform, eval_transform) - raw albumentations transforms
@@ -286,6 +479,8 @@ def build_image_transformations_albumentations(
         max_size = image_target_size[0]
     else:
         max_size = shortest_image_edge
+
+    extra_augmentation_config = extra_augmentation_config or {}
 
     # Training transforms (using ReplayCompose for consistent augmentation across views)
     # Use SmallestMaxSize to preserve aspect ratios, with INTER_AREA for antialiasing
@@ -311,9 +506,42 @@ def build_image_transformations_albumentations(
             )
         )
 
+    # === Extra augmentations (mask-based and others) ===
+    
+    # Background noise on mask (replaces mask==0 with random noise)
+    if extra_augmentation_config.get("background_noise_on_mask"):
+        train_transform_list.append(BackgroundNoiseTransform(p=1.0))
+    
+    # Masked region transforms (hue_shift, color_filter, monochrome)
+    for transform_cfg in extra_augmentation_config.get("masked_region_transforms", []):
+        transform_type = transform_cfg.get("type", "hue_shift")
+        target_mask_values = transform_cfg.get("target_mask_values", [])
+        p = transform_cfg.get("p", 0.5)
+        
+        if transform_type == "hue_shift":
+            train_transform_list.append(
+                MaskedRegionRandomHue(
+                    target_mask_values=target_mask_values,
+                    hue_shift_range=transform_cfg.get("hue_shift_range", (-180, 180)),
+                    saturation_scale_range=transform_cfg.get("saturation_scale_range", (0.5, 1.5)),
+                    p=p,
+                )
+            )
+        elif transform_type in ("color_filter", "monochrome"):
+            train_transform_list.append(
+                MaskedRegionColorTransform(
+                    target_mask_values=target_mask_values,
+                    mode=transform_type,
+                    alpha_range=transform_cfg.get("alpha_range", (0.2, 0.5)),
+                    p=p,
+                )
+            )
+        else:
+            raise ValueError(f"Unknown masked region transform type: {transform_type}")
+
     train_transform = A.ReplayCompose(train_transform_list, p=1.0)
 
-    # Evaluation transforms (deterministic)
+    # Evaluation transforms (deterministic, no extra augmentations)
     # Use SmallestMaxSize to preserve aspect ratios, with INTER_AREA for antialiasing
     eval_transform = A.Compose(
         [
