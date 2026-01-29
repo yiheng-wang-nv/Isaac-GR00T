@@ -1,5 +1,5 @@
-import warnings
 from typing import Sequence
+import warnings
 
 import albumentations as A
 import cv2
@@ -10,18 +10,18 @@ import torchvision.transforms.v2 as transforms
 
 class MaskedColorTransform(A.ImageOnlyTransform):
     """Apply random color transformation to specific mask regions.
-    
+
     Randomly chooses between two modes:
     - grayscale_tint: Convert to grayscale then tint (preserves texture, changes color completely)
     - random_tint: Apply semi-transparent color overlay (partial color change)
-    
+
     Args:
         target_mask_values: List of mask values to apply the transform to
         grayscale_prob: Probability of using grayscale_tint mode (vs random_tint)
         alpha_range: (min, max) for random_tint overlay intensity
         p: Probability of applying the transform
     """
-    
+
     def __init__(
         self,
         target_mask_values: Sequence[int] = (5,),
@@ -34,33 +34,29 @@ class MaskedColorTransform(A.ImageOnlyTransform):
         self.target_mask_values = list(target_mask_values)
         self.grayscale_prob = grayscale_prob
         self.alpha_range = alpha_range
-    
+
     def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
         if mask is None:
             return img
-        
+
         region_mask = np.zeros(mask.shape[:2], dtype=bool)
         for val in self.target_mask_values:
-            region_mask |= (mask == val)
-        
+            region_mask |= mask == val
+
         if not region_mask.any():
             return img
-        
+
         # Random color
         random_color = np.random.randint(0, 256, size=3).astype(np.float32)
         result = img.copy().astype(np.float32)
-        
+
         # Choose mode: grayscale_tint or random_tint
         use_grayscale = np.random.random() < self.grayscale_prob
-        
+
         if use_grayscale:
             # Grayscale + tint: preserves texture, completely changes color
             tint = random_color / 255.0
-            gray = (
-                0.299 * result[..., 0] +
-                0.587 * result[..., 1] +
-                0.114 * result[..., 2]
-            )
+            gray = 0.299 * result[..., 0] + 0.587 * result[..., 1] + 0.114 * result[..., 2]
             for c in range(3):
                 result[region_mask, c] = gray[region_mask] * tint[c]
         else:
@@ -70,46 +66,46 @@ class MaskedColorTransform(A.ImageOnlyTransform):
                 result[region_mask, c] = (
                     result[region_mask, c] * (1 - alpha) + random_color[c] * alpha
                 )
-        
+
         return np.clip(result, 0, 255).astype(np.uint8)
-    
+
     def get_params_dependent_on_data(self, params, data) -> dict:
         return {"mask": data.get("mask")}
-    
+
     def get_transform_init_args_names(self) -> tuple[str, ...]:
         return ("target_mask_values", "grayscale_prob", "alpha_range")
 
 
 class BackgroundNoiseTransform(A.ImageOnlyTransform):
     """Replace background (mask == 0) with random noise.
-    
+
     This transform replaces pixels where mask value is 0 with random RGB noise,
     useful for domain randomization in sim-to-real transfer.
-    
+
     Args:
         p: Probability of applying the transform
     """
-    
+
     def __init__(self, p: float = 1.0, always_apply: bool | None = None):
         super().__init__(p=p, always_apply=always_apply)
-    
+
     def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
         if mask is None:
             return img
-        
+
         result = img.copy()
         mask_2d = mask[..., 0] if mask.ndim == 3 else mask
         background = mask_2d == 0
-        
+
         if background.any():
             noise = np.random.randint(0, 256, size=result.shape, dtype=np.uint8)
             result[background] = noise[background]
-        
+
         return result
-    
+
     def get_params_dependent_on_data(self, params, data) -> dict:
         return {"mask": data.get("mask")}
-    
+
     def get_transform_init_args_names(self) -> tuple[str, ...]:
         return ()
 
@@ -117,10 +113,10 @@ class BackgroundNoiseTransform(A.ImageOnlyTransform):
 def apply_with_replay(transform, images, masks=None, replay=None):
     """
     Apply albumentations transforms to images (and optionally masks) with replay functionality.
-    
+
     Replay ensures consistent random augmentation parameters across all images in a sequence,
     which is critical for temporal consistency in video/trajectory data.
-    
+
     Mask-based transforms (attached as transform.mask_transforms) are applied per-frame
     BEFORE the main transform, ensuring each frame uses its own mask.
 
@@ -141,7 +137,7 @@ def apply_with_replay(transform, images, masks=None, replay=None):
     current_replay = replay
 
     has_replay = hasattr(transform, "replay")
-    
+
     # Get mask-based transforms (applied per-frame, not replayed)
     mask_transforms = getattr(transform, "mask_transforms", None)
 
@@ -400,25 +396,25 @@ def build_image_transformations_albumentations(
         )
 
     train_transform = A.ReplayCompose(train_transform_list, p=1.0)
-    
+
     # === Mask-based augmentations (applied per-frame, NOT in ReplayCompose) ===
     # These transforms depend on per-frame mask data and must not be replayed
     # to ensure each frame uses its own mask
     mask_transforms = []
-    
+
     # Background noise on mask (replaces mask==0 with random noise)
     bg_noise = extra_augmentation_config.get("background_noise_on_mask")
     if bg_noise:
         p = bg_noise if isinstance(bg_noise, (int, float)) else 1.0
         mask_transforms.append(BackgroundNoiseTransform(p=float(p)))
-    
+
     # Masked region transforms
     for transform_cfg in extra_augmentation_config.get("masked_region_transforms", []):
         target_mask_values = transform_cfg.get("target_mask_values", [])
         p = transform_cfg.get("p", 0.5)
         grayscale_prob = transform_cfg.get("grayscale_prob", 0.5)
         alpha_range = tuple(transform_cfg.get("alpha_range", [0.3, 1.0]))
-        
+
         mask_transforms.append(
             MaskedColorTransform(
                 target_mask_values=target_mask_values,
@@ -427,7 +423,7 @@ def build_image_transformations_albumentations(
                 p=p,
             )
         )
-    
+
     # Attach mask transforms to the main transform for use in apply_with_replay
     train_transform.mask_transforms = mask_transforms if mask_transforms else None
 

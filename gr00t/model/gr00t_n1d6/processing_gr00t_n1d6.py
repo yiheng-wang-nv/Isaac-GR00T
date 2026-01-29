@@ -411,7 +411,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                 assert view in images, f"{view} not in {images}"
                 view_masks = masks.get(view) if masks else None
                 view_images = images[view]
-                
+
                 # Apply transforms with replay for consistency
                 # Note: background_noise, masked_region_transforms etc. are now in the pipeline
                 transformed_images, transformed_masks, replay = apply_with_replay(
