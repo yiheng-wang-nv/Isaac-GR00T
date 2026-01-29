@@ -302,11 +302,92 @@ MODALITY_CONFIGS = {
     },
 }
 
+"""
+Modality configuration for Galbot_G1 datasets exported by `mcap2lerobot`.
+"""
+
+galbot_g1_config = {
+    # Video modality: 4 cameras
+    "video": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=[
+            "head_left_camera_color_optical_frame",
+            "head_right_camera_color_optical_frame",
+            "left_arm_camera_color_optical_frame",
+            "right_arm_camera_color_optical_frame",
+        ],
+    ),
+    # Mask modality: 4 cameras (optional, only used if mask_path is provided)
+    "mask": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=[
+            "head_left_camera_color_optical_frame",
+            "head_right_camera_color_optical_frame",
+            "left_arm_camera_color_optical_frame",
+            "right_arm_camera_color_optical_frame",
+        ],
+    ),
+    # State modality: proprioceptive observations
+    "state": ModalityConfig(
+        delta_indices=[0],  # Current state
+        modality_keys=[
+            "left_arm_joint",
+            "left_gripper_joint",
+            "right_arm_joint",
+            "right_gripper_joint",
+        ],
+        sin_cos_embedding_keys=["left_arm_joint", "right_arm_joint"],
+    ),
+    # Action modality: 16-step prediction horizon
+    "action": ModalityConfig(
+        delta_indices=list(range(0, 16)),  # Predict 16 steps into the future
+        modality_keys=[
+            "left_arm_joint",
+            "left_gripper_joint",
+            "right_arm_joint",
+            "right_gripper_joint",
+        ],
+        action_configs=[
+            # left_arm: use absolute actions (matching old config with min_max normalization)
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,  # Joint space control
+                format=ActionFormat.DEFAULT,
+            ),
+            # left_gripper: use absolute actions
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+            # right_arm: use absolute actions
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+            # right_gripper: use absolute actions
+            ActionConfig(
+                rep=ActionRepresentation.ABSOLUTE,
+                type=ActionType.NON_EEF,
+                format=ActionFormat.DEFAULT,
+            ),
+        ],
+    ),
+    
+    # Language modality: task description
+    "language": ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["annotation.human.task_description"],
+    ),
+}
+
 
 def register_modality_config(
     config: dict, embodiment_tag: EmbodimentTag = EmbodimentTag.NEW_EMBODIMENT
 ):
-    assert embodiment_tag.value not in MODALITY_CONFIGS, (
-        f"Embodiment tag {embodiment_tag} already registered"
-    )
     MODALITY_CONFIGS[embodiment_tag.value] = config
+
+
+# Register the custom Galbot G1 config under NEW_EMBODIMENT.
+register_modality_config(galbot_g1_config, embodiment_tag=EmbodimentTag.NEW_EMBODIMENT)

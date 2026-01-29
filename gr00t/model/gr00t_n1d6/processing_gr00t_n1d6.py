@@ -127,6 +127,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
         use_albumentations: bool = False,
+        extra_augmentation_config: dict | None = None,
         use_relative_action: bool = False,
         embodiment_id_mapping: dict[str, int] | None = None,
         transformers_loading_kwargs: dict = {"trust_remote_code": True},
@@ -148,6 +149,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         self.clip_outliers = clip_outliers
         self.apply_sincos_state_encoding = apply_sincos_state_encoding
         self.use_relative_action = use_relative_action
+        self.extra_augmentation_config = extra_augmentation_config
 
         # Save VLM settings
         self.formalize_language = formalize_language
@@ -185,6 +187,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                     color_jitter_params,
                     shortest_image_edge,
                     crop_fraction,
+                    extra_augmentation_config=self.extra_augmentation_config,
                 )
             )
         else:
@@ -368,9 +371,10 @@ class Gr00tN1d6Processor(BaseProcessor):
         else:
             language = content.text
 
-        vlm_inputs = self._get_vlm_inputs(
+        vlm_inputs, stacked_masks = self._get_vlm_inputs(
             image_keys=image_keys,
             images=content.images,
+            masks=content.masks,
             image_transform=image_transform,
             language=language,
         )
@@ -382,6 +386,8 @@ class Gr00tN1d6Processor(BaseProcessor):
             transformed_inputs["action"] = normalized_actions.to(torch.get_default_dtype())
         # Add VLM inputs
         transformed_inputs.update(vlm_inputs)
+        if stacked_masks is not None:
+            transformed_inputs["masks"] = stacked_masks
         if action_mask is not None:
             transformed_inputs["action_mask"] = action_mask
         transformed_inputs["embodiment_id"] = self.embodiment_id_mapping[embodiment_tag.value]
@@ -391,22 +397,34 @@ class Gr00tN1d6Processor(BaseProcessor):
         self,
         image_keys: list[str],
         images: list[Image.Image],
+        masks: dict[str, list[np.ndarray]] | None,
         image_transform: transforms.Compose | A.Compose,
         language: str,
     ):
         temporal_stacked_images = {}
+        temporal_stacked_masks = {} if masks else None
 
         if self.use_albumentations:
-            # Use albumentations transforms
+            # Use albumentations transforms (all augmentations are in the pipeline)
             replay = None
             for view in image_keys:
                 assert view in images, f"{view} not in {images}"
+                view_masks = masks.get(view) if masks else None
+                view_images = images[view]
+                
                 # Apply transforms with replay for consistency
-                transformed_images, replay = apply_with_replay(
-                    image_transform, images[view], replay
+                # Note: background_noise, masked_region_transforms etc. are now in the pipeline
+                transformed_images, transformed_masks, replay = apply_with_replay(
+                    image_transform, view_images, view_masks, replay
                 )
                 temporal_stacked_images[view] = torch.stack(transformed_images)  # (T, C, H, W)
+                if transformed_masks is not None:
+                    temporal_stacked_masks[view] = torch.stack(transformed_masks)  # (T, H, W)
         else:
+            if masks is not None:
+                raise ValueError(
+                    "Mask transforms require albumentations. Set use_albumentations_transforms=True."
+                )
             # Use torchvision transforms
             for view in image_keys:
                 assert view in images, f"{view} not in {images}"
@@ -426,14 +444,20 @@ class Gr00tN1d6Processor(BaseProcessor):
             .flatten(0, 1)
             .numpy()
         )  # (T*V, C, H, W), Eagle processor expects numpy array
+        stacked_masks = None
+        if temporal_stacked_masks is not None:
+            stacked_masks = torch.stack(
+                [temporal_stacked_masks[view] for view in image_keys], dim=1
+            ).flatten(0, 1)
 
         vlm_inputs = self._apply_vlm_processing(stacked_images, language)
-        return vlm_inputs
+        return vlm_inputs, stacked_masks
 
     def save_pretrained(self, save_directory: str | Path) -> list[Path]:
         # dump modality configs to dict using the recursive function
         save_directory.mkdir(parents=True, exist_ok=True)
         main_config_file = Path(save_directory) / "processor_config.json"
+        training_config_file = Path(save_directory) / "training_processor_config.json"
         statistics_file = Path(save_directory) / "statistics.json"
         embodiment_id_file = Path(save_directory) / "embodiment_id.json"
 
@@ -464,8 +488,15 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "use_relative_action": self.use_relative_action,
             },
         }
+        training_only_kwargs = {}
+        if self.extra_augmentation_config:
+            training_only_kwargs["extra_augmentation_config"] = self.extra_augmentation_config
+
         with open(main_config_file, "w") as f:
             json.dump(config, f, indent=2)
+        if training_only_kwargs:
+            with open(training_config_file, "w") as f:
+                json.dump(training_only_kwargs, f, indent=2)
         # Save statistics
         with open(statistics_file, "w") as f:
             json.dump(to_json_serializable(self.state_action_processor.statistics), f, indent=2)
@@ -476,11 +507,13 @@ class Gr00tN1d6Processor(BaseProcessor):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str | Path, **kwargs):
+        load_training_only = kwargs.pop("load_training_only", False)
         transformers_loading_kwargs = kwargs.pop(
             "transformers_loading_kwargs", {"trust_remote_code": True}
         )
         pretrained_model_name_or_path = Path(pretrained_model_name_or_path)
         config_file = pretrained_model_name_or_path / "processor_config.json"
+        training_config_file = pretrained_model_name_or_path / "training_processor_config.json"
         statistics_file = pretrained_model_name_or_path / "statistics.json"
         embodiment_id_file = pretrained_model_name_or_path / "embodiment_id.json"
         is_local = os.path.isdir(pretrained_model_name_or_path)
@@ -503,6 +536,14 @@ class Gr00tN1d6Processor(BaseProcessor):
         processor_kwargs = config["processor_kwargs"]
         processor_kwargs["statistics"] = statistics
         processor_kwargs["embodiment_id_mapping"] = embodiment_id_mapping
+        if load_training_only:
+            if training_config_file.exists():
+                with open(training_config_file, "r") as f:
+                    training_only_kwargs = json.load(f)
+                processor_kwargs.update(training_only_kwargs)
+        else:
+            # Remove training-only augmentation configs when not loading for training
+            processor_kwargs.pop("extra_augmentation_config", None)
         # Directly override other processor kwargs
         if kwargs:
             # Override modality configs while keeping pretrained embodiment configs
@@ -513,6 +554,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "random_rotation_angle",
                 "color_jitter_params",
                 "use_relative_action",
+                "extra_augmentation_config",
             ]
             for key in override_keys:
                 if key in kwargs:

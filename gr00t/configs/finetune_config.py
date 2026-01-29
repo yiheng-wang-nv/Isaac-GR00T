@@ -19,7 +19,7 @@ class FinetuneConfig:
     base_model_path: str
     """Path to the pretrained base model checkpoint (e.g., Hugging Face model hub or local directory)."""
 
-    dataset_path: str
+    dataset_path: list[str]
     """Path to the dataset root directory containing trajectory data for fine-tuning."""
 
     embodiment_tag: EmbodimentTag
@@ -65,6 +65,21 @@ class FinetuneConfig:
     Example: {"brightness": 0.4, "contrast": 0.4, "saturation": 0.4, "hue": 0.1}
 
     If None, applying the default color jitter augmentation from the pretrained model.
+    """
+    extra_augmentation_config: str | None = None
+    """
+    JSON string for extra image augmentations (mask-based and others).
+    
+    Example (pass as JSON string):
+    '{"background_noise_on_mask": 0.9, "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "grayscale_prob": 0.5, "alpha_range": [0, 1]}]}'
+    
+    Supported options:
+      - "background_noise_on_mask": bool or float (probability) - Replace mask==0 with noise
+      - "masked_region_transforms": list of dicts with:
+          - "target_mask_values": list of int (e.g., [4] or [5])
+          - "p": float (probability of applying)
+          - "grayscale_prob": float (0-1, prob of grayscale_tint vs random_tint)
+          - "alpha_range": [min, max] for random_tint intensity
     """
 
     # --- Training Configuration ---
