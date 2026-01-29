@@ -19,11 +19,17 @@ from PIL import ImageOps
 import imageio.v2 as imageio
 import cv2
 
+import albumentations as A
+
 from gr00t.configs.base_config import Config, get_default_config
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.dataset.factory import DatasetFactory
 from gr00t.data.dataset.lerobot_episode_loader import LeRobotEpisodeLoader
 from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
+from gr00t.model.gr00t_n1d6.image_augmentations import (
+    BackgroundNoiseTransform,
+    MaskedColorTransform,
+)
 
 
 def set_seeds(seed: int) -> None:
@@ -107,6 +113,64 @@ def get_image_keys_and_t(config: Config) -> tuple[list[str], int]:
     image_keys = modality_cfg["video"].modality_keys
     temporal_len = len(modality_cfg["video"].delta_indices)
     return image_keys, temporal_len
+
+
+def build_mask_only_transforms(extra_augmentation_config: dict):
+    """Build transforms that only apply mask-based augmentations (no resize/crop)."""
+    mask_transforms = []
+    
+    # Background noise on mask (replaces mask==0 with random noise)
+    bg_noise = extra_augmentation_config.get("background_noise_on_mask")
+    if bg_noise:
+        p = bg_noise if isinstance(bg_noise, (int, float)) else 1.0
+        mask_transforms.append(BackgroundNoiseTransform(p=float(p)))
+    
+    # Masked region transforms
+    for transform_cfg in extra_augmentation_config.get("masked_region_transforms", []):
+        target_mask_values = transform_cfg.get("target_mask_values", [])
+        p = transform_cfg.get("p", 0.5)
+        grayscale_prob = transform_cfg.get("grayscale_prob", 0.5)
+        alpha_range = tuple(transform_cfg.get("alpha_range", [0.3, 1.0]))
+        
+        mask_transforms.append(
+            MaskedColorTransform(
+                target_mask_values=target_mask_values,
+                grayscale_prob=grayscale_prob,
+                alpha_range=alpha_range,
+                p=p,
+            )
+        )
+    
+    return mask_transforms
+
+
+def apply_mask_only_transforms(
+    images: list[np.ndarray],
+    masks: list[np.ndarray] | None,
+    mask_transforms: list,
+) -> list[np.ndarray]:
+    """Apply only mask-based transforms without resize/crop."""
+    results = []
+    for idx, img in enumerate(images):
+        img_array = np.asarray(img)
+        if img_array.ndim == 2:
+            img_array = np.stack([img_array] * 3, axis=-1)
+        
+        mask = masks[idx] if masks is not None else None
+        if mask is not None:
+            mask_array = np.asarray(mask)
+        else:
+            mask_array = None
+        
+        # Apply each mask transform
+        for transform in mask_transforms:
+            # Check if transform should be applied (based on p)
+            if np.random.random() < transform.p:
+                img_array = transform.apply(img_array, mask=mask_array)
+        
+        results.append(img_array)
+    
+    return results
 
 
 def build_processor(config: Config) -> Gr00tN1d6Processor:
@@ -283,6 +347,163 @@ def _compare_original_vs_transformed(
     return _stack_rows(rows)
 
 
+def _create_grid_comparison(
+    originals: list[Image.Image | np.ndarray],
+    transformed: list[Image.Image | np.ndarray],
+    grid_size: int = 3,
+    cell_width: int | None = None,
+) -> Image.Image:
+    """Create a grid comparison image (e.g., 3x3) with original|transformed pairs.
+    
+    Args:
+        originals: List of original images
+        transformed: List of transformed images
+        grid_size: Number of rows and columns (default 3 for 3x3 = 9 cells)
+        cell_width: Width for each cell (original + transformed). If None, auto-compute.
+    
+    Returns:
+        Grid image with original on left, transformed on right for each cell
+    """
+    n_cells = grid_size * grid_size
+    
+    # Convert all to PIL Images
+    def to_pil(img):
+        if isinstance(img, Image.Image):
+            return ImageOps.exif_transpose(img).convert("RGB")
+        arr = np.asarray(img)
+        if arr.dtype != np.uint8:
+            if arr.max() <= 1.0:
+                arr = (arr * 255).clip(0, 255).astype(np.uint8)
+            else:
+                arr = arr.clip(0, 255).astype(np.uint8)
+        return Image.fromarray(arr).convert("RGB")
+    
+    orig_pils = [to_pil(img) for img in originals[:n_cells]]
+    trans_pils = [to_pil(img) for img in transformed[:n_cells]]
+    
+    # Determine cell size
+    if cell_width is None:
+        # Use first transformed image size as reference
+        ref_w, ref_h = trans_pils[0].size
+        cell_width = ref_w * 2  # original + transformed side by side
+        cell_height = ref_h
+    else:
+        cell_height = int(cell_width * trans_pils[0].height / (trans_pils[0].width * 2))
+    
+    single_w = cell_width // 2
+    single_h = cell_height
+    
+    # Create the grid
+    grid_w = cell_width * grid_size
+    grid_h = cell_height * grid_size
+    grid_img = Image.new("RGB", (grid_w, grid_h), (0, 0, 0))
+    
+    for idx in range(min(len(orig_pils), n_cells)):
+        row = idx // grid_size
+        col = idx % grid_size
+        
+        orig = orig_pils[idx].resize((single_w, single_h), Image.BILINEAR)
+        trans = trans_pils[idx].resize((single_w, single_h), Image.BILINEAR)
+        
+        x = col * cell_width
+        y = row * cell_height
+        
+        grid_img.paste(orig, (x, y))
+        grid_img.paste(trans, (x + single_w, y))
+    
+    return grid_img
+
+
+def save_grid_comparison(
+    config: Config,
+    output_dir: Path,
+    dataset_index: int,
+    episode_index: int,
+    view: str | None,
+    num_frames: int,
+    output_name: str | None,
+    no_resize: bool = False,
+) -> None:
+    """Sample frames uniformly and save a grid comparison image."""
+    dataset_spec = config.data.datasets[0]
+    dataset_paths = dataset_spec.dataset_paths
+    if dataset_index < 0 or dataset_index >= len(dataset_paths):
+        raise ValueError(f"dataset_index {dataset_index} out of range (0..{len(dataset_paths)-1})")
+    dataset_path = dataset_paths[dataset_index]
+
+    embodiment_tag = EmbodimentTag(dataset_spec.embodiment_tag)
+    modality_cfg = config.data.modality_configs[embodiment_tag.value]
+    image_keys = modality_cfg["video"].modality_keys
+    if not image_keys:
+        raise ValueError("No video modality keys found.")
+    view = view or image_keys[0]
+    if view not in image_keys:
+        raise ValueError(f"View '{view}' not in modality config: {image_keys}")
+
+    loader = LeRobotEpisodeLoader(
+        dataset_path=dataset_path,
+        modality_configs=modality_cfg,
+        video_backend=config.data.video_backend,
+    )
+    df = loader[episode_index]
+    if df.empty:
+        raise ValueError(f"Episode {episode_index} is empty.")
+    
+    total_frames = len(df)
+    # Sample uniformly
+    if total_frames <= num_frames:
+        indices = list(range(total_frames))
+    else:
+        indices = [int(i * (total_frames - 1) / (num_frames - 1)) for i in range(num_frames)]
+    
+    original_images = [df[f"video.{view}"].iloc[i] for i in indices]
+    view_masks = None
+    mask_col = f"mask.{view}"
+    if mask_col in df.columns:
+        view_masks = [df[mask_col].iloc[i] for i in indices]
+
+    if no_resize:
+        # Only apply mask-based transforms without resize/crop
+        extra_aug_config = config.model.extra_augmentation_config or {}
+        if not extra_aug_config:
+            print("Warning: --no_resize specified but no extra_augmentation_config provided.")
+            transformed_images = original_images
+        else:
+            mask_transforms = build_mask_only_transforms(extra_aug_config)
+            transformed_images = apply_mask_only_transforms(
+                original_images, view_masks, mask_transforms
+            )
+    else:
+        processor = build_processor(config)
+        processor.train()
+        
+        images_dict = {view: original_images}
+        masks_dict = {view: view_masks} if view_masks is not None else None
+
+        vlm_inputs, _ = processor._get_vlm_inputs(
+            image_keys=[view],
+            images=images_dict,
+            masks=masks_dict,
+            image_transform=processor.train_image_transform,
+            language="",
+        )
+        transformed_images = vlm_inputs["vlm_content"]["images"]
+    
+    # Determine grid size (ceil of sqrt)
+    grid_size = int(np.ceil(np.sqrt(num_frames)))
+    
+    grid_img = _create_grid_comparison(original_images, transformed_images, grid_size=grid_size)
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dataset_path_obj = Path(dataset_path)
+    dataset_name = f"{dataset_path_obj.parent.name}_{dataset_path_obj.name}"
+    view_tag = view.replace(".", "_")
+    default_name = f"{dataset_name}_episode_{episode_index:06d}_{view_tag}_grid_{num_frames}frames.png"
+    output_path = output_dir / (output_name or default_name)
+    grid_img.save(output_path)
+    print(f"Saved grid comparison ({grid_size}x{grid_size}, {num_frames} frames) to {output_path.resolve()}")
+
+
 def _write_video(
     frames: list[Image.Image],
     output_path: Path,
@@ -374,10 +595,8 @@ def save_video_from_episode(
     fps: int,
     side_by_side: bool,
     output_name: str | None,
+    no_resize: bool = False,
 ) -> None:
-    processor = build_processor(config)
-    processor.train()
-
     dataset_spec = config.data.datasets[0]
     dataset_paths = dataset_spec.dataset_paths
     if dataset_index < 0 or dataset_index >= len(dataset_paths):
@@ -407,18 +626,34 @@ def save_video_from_episode(
     if mask_col in df.columns:
         view_masks = list(df[mask_col].values)
 
-    images_dict = {view: original_images}
-    masks_dict = {view: view_masks} if view_masks is not None else None
+    if no_resize:
+        # Only apply mask-based transforms without resize/crop
+        extra_aug_config = config.model.extra_augmentation_config or {}
+        if not extra_aug_config:
+            print("Warning: --no_resize specified but no extra_augmentation_config provided. Using original images.")
+            transformed_images = original_images
+        else:
+            mask_transforms = build_mask_only_transforms(extra_aug_config)
+            transformed_images = apply_mask_only_transforms(
+                original_images, view_masks, mask_transforms
+            )
+        print(f"Processing {len(transformed_images)} frames (mask-only transforms, no resize)...")
+    else:
+        processor = build_processor(config)
+        processor.train()
+        
+        images_dict = {view: original_images}
+        masks_dict = {view: view_masks} if view_masks is not None else None
 
-    vlm_inputs, _ = processor._get_vlm_inputs(
-        image_keys=[view],
-        images=images_dict,
-        masks=masks_dict,
-        image_transform=processor.train_image_transform,
-        language="",
-    )
-    transformed_images = vlm_inputs["vlm_content"]["images"]
-    print(f"Processing {len(transformed_images)} frames...")
+        vlm_inputs, _ = processor._get_vlm_inputs(
+            image_keys=[view],
+            images=images_dict,
+            masks=masks_dict,
+            image_transform=processor.train_image_transform,
+            language="",
+        )
+        transformed_images = vlm_inputs["vlm_content"]["images"]
+        print(f"Processing {len(transformed_images)} frames...")
 
     dataset_path_obj = Path(dataset_path)
     dataset_name = f"{dataset_path_obj.parent.name}_{dataset_path_obj.name}"
@@ -563,6 +798,28 @@ def main() -> None:
         help="Output side-by-side original vs transformed video.",
     )
     parser.add_argument("--video_output_name", type=str, default=None, help="Output video file name.")
+    parser.add_argument(
+        "--no_resize",
+        action="store_true",
+        help="Only apply mask-based transforms (noise, color change) without resize/crop. Keeps original resolution.",
+    )
+    parser.add_argument(
+        "--save_grid",
+        action="store_true",
+        help="Save a grid comparison image with uniformly sampled frames.",
+    )
+    parser.add_argument(
+        "--grid_num_frames",
+        type=int,
+        default=9,
+        help="Number of frames to sample for grid comparison (default: 9 for 3x3 grid).",
+    )
+    parser.add_argument(
+        "--grid_output_name",
+        type=str,
+        default=None,
+        help="Output filename for grid comparison image.",
+    )
     parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -584,6 +841,18 @@ def main() -> None:
                     fps=args.video_fps,
                     side_by_side=args.video_side_by_side,
                     output_name=args.video_output_name,
+                    no_resize=args.no_resize,
+                )
+            if args.save_grid:
+                save_grid_comparison(
+                    config=config,
+                    output_dir=out_dir,
+                    dataset_index=args.video_dataset_index,
+                    episode_index=args.video_episode_index,
+                    view=args.video_view,
+                    num_frames=args.grid_num_frames,
+                    output_name=args.grid_output_name,
+                    no_resize=args.no_resize,
                 )
             if args.comparison_per_dataset:
                 save_comparison_per_dataset(
@@ -616,6 +885,18 @@ def main() -> None:
             fps=args.video_fps,
             side_by_side=args.video_side_by_side,
             output_name=args.video_output_name,
+            no_resize=args.no_resize,
+        )
+    if args.save_grid:
+        save_grid_comparison(
+            config=config,
+            output_dir=out_dir,
+            dataset_index=args.video_dataset_index,
+            episode_index=args.video_episode_index,
+            view=args.video_view,
+            num_frames=args.grid_num_frames,
+            output_name=args.grid_output_name,
+            no_resize=args.no_resize,
         )
     if args.comparison_per_dataset:
         save_comparison_per_dataset(
