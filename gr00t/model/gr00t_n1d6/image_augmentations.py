@@ -10,27 +10,22 @@ import torchvision.transforms.v2 as transforms
 
 def apply_with_replay(transform, images, masks=None, replay=None):
     """
-    Apply albumentations transforms to images (and optionally masks) with replay functionality.
-
-    Replay ensures consistent random augmentation parameters across all images in a sequence,
-    which is critical for temporal consistency in video/trajectory data.
-
-    Mask-based transforms (attached as transform.mask_transforms) are applied per-frame
-    BEFORE the main transform, ensuring each frame uses its own mask.
+    Apply albumentations transforms to multiple images with replay functionality.
+    When masks are provided, mask-based transforms run per-frame before the main transform.
 
     Args:
         transform: Albumentations ReplayCompose or Compose transform
-        images: List of images (PIL or numpy arrays)
+        images: List of PIL Images to transform
         masks: Optional list of masks aligned with images (H, W)
         replay: Optional replay data for consistent transforms. If None, creates new replay.
 
     Returns:
-        tuple: (transformed_images, transformed_masks, replay_data)
-            - transformed_images: List of transformed torch tensors (C, H, W) as uint8
+        tuple: (transformed_tensors_list, transformed_masks, replay_data)
+            - transformed_tensors_list: List of transformed torch tensors (C, H, W) as uint8
             - transformed_masks: List of transformed torch tensors (H, W) or None if masks not provided
-            - replay_data: Replay data for consistent transforms across images
+            - replay_data: Replay data for consistent transforms across images (None for regular Compose)
     """
-    transformed_images = []
+    transformed_tensors = []
     transformed_masks = [] if masks is not None else None
     current_replay = replay
 
@@ -59,12 +54,14 @@ def apply_with_replay(transform, images, masks=None, replay=None):
         # Apply main transform with replay (geometric transforms, etc.)
         if has_replay:
             if current_replay is None:
+                # First image - create replay data
                 if mask_array is not None:
                     augmented = transform(image=img_array, mask=mask_array)
                 else:
                     augmented = transform(image=img_array)
                 current_replay = augmented["replay"]
             else:
+                # Subsequent images - use replay for consistent transforms
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     if mask_array is not None:
@@ -86,13 +83,13 @@ def apply_with_replay(transform, images, masks=None, replay=None):
             img_result = (img_result * 255).astype(np.uint8)
         elif img_result.dtype != np.uint8:
             raise ValueError(f"Unexpected image data type: {img_result.dtype}")
-        transformed_images.append(torch.from_numpy(img_result).permute(2, 0, 1))
+        transformed_tensors.append(torch.from_numpy(img_result).permute(2, 0, 1))
 
         if mask_array is not None:
             mask_result = augmented["mask"]
             transformed_masks.append(torch.from_numpy(mask_result))
 
-    return transformed_images, transformed_masks, current_replay
+    return transformed_tensors, transformed_masks, current_replay
 
 
 class MaskedColorTransform(A.ImageOnlyTransform):
