@@ -8,6 +8,93 @@ import torch
 import torchvision.transforms.v2 as transforms
 
 
+def apply_with_replay(transform, images, masks=None, replay=None):
+    """
+    Apply albumentations transforms to images (and optionally masks) with replay functionality.
+
+    Replay ensures consistent random augmentation parameters across all images in a sequence,
+    which is critical for temporal consistency in video/trajectory data.
+
+    Mask-based transforms (attached as transform.mask_transforms) are applied per-frame
+    BEFORE the main transform, ensuring each frame uses its own mask.
+
+    Args:
+        transform: Albumentations ReplayCompose or Compose transform
+        images: List of images (PIL or numpy arrays)
+        masks: Optional list of masks aligned with images (H, W)
+        replay: Optional replay data for consistent transforms. If None, creates new replay.
+
+    Returns:
+        tuple: (transformed_images, transformed_masks, replay_data)
+            - transformed_images: List of transformed torch tensors (C, H, W) as uint8
+            - transformed_masks: List of transformed torch tensors (H, W) or None if masks not provided
+            - replay_data: Replay data for consistent transforms across images
+    """
+    transformed_images = []
+    transformed_masks = [] if masks is not None else None
+    current_replay = replay
+
+    has_replay = hasattr(transform, "replay")
+
+    # Get mask-based transforms (applied per-frame, not replayed)
+    mask_transforms = getattr(transform, "mask_transforms", None)
+
+    if masks is not None and len(masks) != len(images):
+        raise ValueError(
+            f"Number of masks ({len(masks)}) must match number of images ({len(images)})"
+        )
+
+    for idx, img in enumerate(images):
+        img_array = np.array(img)
+        mask_array = None if masks is None else np.array(masks[idx])
+        if mask_array is not None and mask_array.dtype == np.bool_:
+            mask_array = mask_array.astype(np.uint8)
+
+        # Apply mask-based transforms FIRST (per-frame, using current frame's mask)
+        if mask_transforms and mask_array is not None:
+            for mask_tf in mask_transforms:
+                result = mask_tf(image=img_array, mask=mask_array)
+                img_array = result["image"]
+
+        # Apply main transform with replay (geometric transforms, etc.)
+        if has_replay:
+            if current_replay is None:
+                if mask_array is not None:
+                    augmented = transform(image=img_array, mask=mask_array)
+                else:
+                    augmented = transform(image=img_array)
+                current_replay = augmented["replay"]
+            else:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    if mask_array is not None:
+                        augmented = transform.replay(
+                            image=img_array, mask=mask_array, saved_augmentations=current_replay
+                        )
+                    else:
+                        augmented = transform.replay(
+                            image=img_array, saved_augmentations=current_replay
+                        )
+        else:
+            if mask_array is not None:
+                augmented = transform(image=img_array, mask=mask_array)
+            else:
+                augmented = transform(image=img_array)
+
+        img_result = augmented["image"]
+        if img_result.dtype == np.float32:
+            img_result = (img_result * 255).astype(np.uint8)
+        elif img_result.dtype != np.uint8:
+            raise ValueError(f"Unexpected image data type: {img_result.dtype}")
+        transformed_images.append(torch.from_numpy(img_result).permute(2, 0, 1))
+
+        if mask_array is not None:
+            mask_result = augmented["mask"]
+            transformed_masks.append(torch.from_numpy(mask_result))
+
+    return transformed_images, transformed_masks, current_replay
+
+
 class MaskedColorTransform(A.ImageOnlyTransform):
     """Apply random color transformation to specific mask regions.
 
@@ -108,93 +195,6 @@ class BackgroundNoiseTransform(A.ImageOnlyTransform):
 
     def get_transform_init_args_names(self) -> tuple[str, ...]:
         return ()
-
-
-def apply_with_replay(transform, images, masks=None, replay=None):
-    """
-    Apply albumentations transforms to images (and optionally masks) with replay functionality.
-
-    Replay ensures consistent random augmentation parameters across all images in a sequence,
-    which is critical for temporal consistency in video/trajectory data.
-
-    Mask-based transforms (attached as transform.mask_transforms) are applied per-frame
-    BEFORE the main transform, ensuring each frame uses its own mask.
-
-    Args:
-        transform: Albumentations ReplayCompose or Compose transform
-        images: List of images (PIL or numpy arrays)
-        masks: Optional list of masks aligned with images (H, W)
-        replay: Optional replay data for consistent transforms. If None, creates new replay.
-
-    Returns:
-        tuple: (transformed_images, transformed_masks, replay_data)
-            - transformed_images: List of transformed torch tensors (C, H, W) as uint8
-            - transformed_masks: List of transformed torch tensors (H, W) or None if masks not provided
-            - replay_data: Replay data for consistent transforms across images
-    """
-    transformed_images = []
-    transformed_masks = [] if masks is not None else None
-    current_replay = replay
-
-    has_replay = hasattr(transform, "replay")
-
-    # Get mask-based transforms (applied per-frame, not replayed)
-    mask_transforms = getattr(transform, "mask_transforms", None)
-
-    if masks is not None and len(masks) != len(images):
-        raise ValueError(
-            f"Number of masks ({len(masks)}) must match number of images ({len(images)})"
-        )
-
-    for idx, img in enumerate(images):
-        img_array = np.array(img)
-        mask_array = None if masks is None else np.array(masks[idx])
-        if mask_array is not None and mask_array.dtype == np.bool_:
-            mask_array = mask_array.astype(np.uint8)
-
-        # Apply mask-based transforms FIRST (per-frame, using current frame's mask)
-        if mask_transforms and mask_array is not None:
-            for mask_tf in mask_transforms:
-                result = mask_tf(image=img_array, mask=mask_array)
-                img_array = result["image"]
-
-        # Apply main transform with replay (geometric transforms, etc.)
-        if has_replay:
-            if current_replay is None:
-                if mask_array is not None:
-                    augmented = transform(image=img_array, mask=mask_array)
-                else:
-                    augmented = transform(image=img_array)
-                current_replay = augmented["replay"]
-            else:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=UserWarning)
-                    if mask_array is not None:
-                        augmented = transform.replay(
-                            image=img_array, mask=mask_array, saved_augmentations=current_replay
-                        )
-                    else:
-                        augmented = transform.replay(
-                            image=img_array, saved_augmentations=current_replay
-                        )
-        else:
-            if mask_array is not None:
-                augmented = transform(image=img_array, mask=mask_array)
-            else:
-                augmented = transform(image=img_array)
-
-        img_result = augmented["image"]
-        if img_result.dtype == np.float32:
-            img_result = (img_result * 255).astype(np.uint8)
-        elif img_result.dtype != np.uint8:
-            raise ValueError(f"Unexpected image data type: {img_result.dtype}")
-        transformed_images.append(torch.from_numpy(img_result).permute(2, 0, 1))
-
-        if mask_array is not None:
-            mask_result = augmented["mask"]
-            transformed_masks.append(torch.from_numpy(mask_result))
-
-    return transformed_images, transformed_masks, current_replay
 
 
 class FractionalRandomCrop(A.DualTransform):
