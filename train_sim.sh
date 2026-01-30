@@ -15,7 +15,7 @@ python gr00t/experiment/launch_finetune.py \
     --embodiment_tag NEW_EMBODIMENT \
     --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py  \
     --num_gpus 1 \
-    --output_dir /localhome/local-vennw/code/Isaac-GR00T/outputs/sim_stage1_v2_120k_p1 \
+    --output_dir /localhome/local-vennw/code/Isaac-GR00T/outputs/sim_stage1_v2_120k_half_noise_half_color \
     --save_steps 10000 \
     --save_total_limit 3 \
     --max_steps 120000 \
@@ -29,7 +29,7 @@ python gr00t/experiment/launch_finetune.py \
     --tune_diffusion_model \
     --color_jitter_params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
     --dataloader_num_workers 8 \
-    --extra_augmentation_config '{"background_noise_on_mask": 0.5, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}'
+    --extra_augmentation_config '{"background_noise_on_mask": 0.5, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [0], "p": 0.5, "alpha_range": [0, 1]}, {"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}'
 
 
 
@@ -50,8 +50,18 @@ python scripts/dump_dataloader_transforms.py \
   --dataset_path /localhome/local-vennw/code/orca-template1-dev/sim-pick-and-place/stage1_3_cosmos/lerobot/ \
   --embodiment_tag NEW_EMBODIMENT \
   --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
-  --extra_augmentation_config '{"background_noise_on_mask": 1.0, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}' \
-  --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_augment_vis \
+  --extra_augmentation_config '{"background_noise_on_mask": 0.5, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [0], "p": 0.5, "alpha_range": [0, 1]}, {"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}' \
+  --save_grid \
+  --grid_num_frames 9 \
+  --no_resize \
+  --video_episode_index 0 --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_augment_vis_half_noise
+
+
+python scripts/dump_dataloader_transforms.py \
+  --dataset_path /localhome/local-vennw/code/orca-template1-dev/sim-pick-and-place/stage1_3_cosmos/lerobot/ \
+  --embodiment_tag NEW_EMBODIMENT \
+  --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
+  --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_augment_vis_normal \
   --save_grid \
   --grid_num_frames 9 \
   --no_resize \
