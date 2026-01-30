@@ -66,17 +66,27 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
-    extra_augmentation_config: dict | None = None
+    extra_augmentation_config: str | None = None
     """
-    Dict for extra image augmentations (mask-based and others).
+    JSON string for extra image augmentations (mask-based and others).
     
     Example:
-    {"background_noise_on_mask": 0.9, "background_noise_on_mask_values": [0],
-     "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}]}
-    
+    {"background_noise_transforms": [{"target_mask_values": [0], "p": 0.9}],
+     "masked_region_transforms": [
+         {"target_mask_values": [4, 5], "p": 1.0, "alpha_range": [0, 1]}
+     ]}
+
+    Example (per-class settings):
+    {"background_noise_transforms": [{"target_mask_values": [0], "p": 0.5}],
+     "masked_region_transforms": [
+         {"target_mask_values": [4], "p": 1.0, "alpha_range": [0.2, 0.8]},
+         {"target_mask_values": [5], "p": 0.5, "alpha_range": [0, 1]}
+     ]}
+
     Supported options:
-      - "background_noise_on_mask": bool or float (probability) - Replace mask==0 with noise
-      - "background_noise_on_mask_values": list of int - Mask values to replace with noise
+      - "background_noise_transforms": list of dicts with:
+          - "target_mask_values": list of int (e.g., [0])
+          - "p": float (probability of applying)
       - "masked_region_transforms": list of dicts with:
           - "target_mask_values": list of int (e.g., [4] or [5])
           - "p": float (probability of applying)
