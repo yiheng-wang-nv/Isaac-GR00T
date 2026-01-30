@@ -66,12 +66,13 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
-    extra_augmentation_config: str | None = None
+    extra_augmentation_config: dict | None = None
     """
-    JSON string for extra image augmentations (mask-based and others).
+    Dict for extra image augmentations (mask-based and others).
     
-    Example (pass as JSON string):
-    '{"background_noise_on_mask": 0.9, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}]}'
+    Example:
+    {"background_noise_on_mask": 0.9, "background_noise_on_mask_values": [0],
+     "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}]}
     
     Supported options:
       - "background_noise_on_mask": bool or float (probability) - Replace mask==0 with noise
