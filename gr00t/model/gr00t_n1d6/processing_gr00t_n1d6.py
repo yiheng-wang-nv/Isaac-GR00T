@@ -406,6 +406,8 @@ class Gr00tN1d6Processor(BaseProcessor):
             replay = None
             for view in image_keys:
                 assert view in images, f"{view} not in {images}"
+                if masks is not None:
+                    assert view in masks, f"{view} not in masks"
                 view_masks = masks.get(view) if masks else None
                 view_images = images[view]
 
