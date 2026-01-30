@@ -402,7 +402,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         temporal_stacked_images = {}
 
         if self.use_albumentations:
-            # Use albumentations transforms (all augmentations are in the pipeline)
+            # Use albumentations transforms
             replay = None
             for view in image_keys:
                 assert view in images, f"{view} not in {images}"
@@ -410,7 +410,6 @@ class Gr00tN1d6Processor(BaseProcessor):
                 view_images = images[view]
 
                 # Apply transforms with replay for consistency
-                # Note: background_noise, masked_region_transforms etc. are now in the pipeline
                 transformed_images, replay = apply_with_replay(
                     image_transform, view_images, view_masks, replay
                 )
