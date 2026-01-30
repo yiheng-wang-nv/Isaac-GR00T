@@ -71,7 +71,7 @@ class FinetuneConfig:
     JSON string for extra image augmentations (mask-based and others).
     
     Example (pass as JSON string):
-    '{"background_noise_on_mask": 0.9, "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}]}'
+    '{"background_noise_on_mask": 0.9, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}]}'
     
     Supported options:
       - "background_noise_on_mask": bool or float (probability) - Replace mask==0 with noise

@@ -178,7 +178,7 @@ class FractionalRandomCrop(A.DualTransform):
         p: probability of applying the transform. Default: 1.0
 
     Targets:
-        image, bboxes, keypoints
+        image, mask, bboxes, keypoints
 
     Image types:
         uint8, float32
@@ -244,7 +244,7 @@ class FractionalCenterCrop(A.DualTransform):
         p: probability of applying the transform. Default: 1.0
 
     Targets:
-        image, bboxes, keypoints
+        image, mask, bboxes, keypoints
 
     Image types:
         uint8, float32
@@ -319,12 +319,12 @@ def build_image_transformations_albumentations(
         shortest_image_edge: Shortest edge size for resizing
         crop_fraction: Fraction of image to crop
         extra_augmentation_config: Optional dict for additional augmentations. Supported keys:
-            - "background_noise_on_mask": bool or float - Replace background (mask==0) with noise
+            - "background_noise_on_mask": bool or float - Replace mask==0 with noise
                 True = always apply, float (0-1) = probability
+            - "background_noise_on_mask_values": list of int - Mask values to replace with noise
             - "masked_region_transforms": list of dicts, each with:
                 - "target_mask_values": list of int (e.g., [4] or [5])
                 - "p": float (probability of applying transform)
-                - "grayscale_prob": float (0-1, prob of grayscale_tint vs random_tint)
                 - "alpha_range": [min, max] for random_tint mode intensity
 
     Returns:
