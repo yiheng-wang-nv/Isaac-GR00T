@@ -320,9 +320,9 @@ def build_image_transformations_albumentations(
         shortest_image_edge: Shortest edge size for resizing
         crop_fraction: Fraction of image to crop
         extra_augmentation_config: Optional dict for additional augmentations. Supported keys:
-            - "background_noise_on_mask": bool or float - Replace mask==0 with noise
-                True = always apply, float (0-1) = probability
-            - "background_noise_on_mask_values": list of int - Mask values to replace with noise
+            - "background_noise_transforms": list of dicts, each with:
+                - "target_mask_values": list of int (e.g., [0])
+                - "p": float (probability of applying transform)
             - "masked_region_transforms": list of dicts, each with:
                 - "target_mask_values": list of int (e.g., [4] or [5])
                 - "p": float (probability of applying transform)
@@ -375,15 +375,14 @@ def build_image_transformations_albumentations(
     # to ensure each frame uses its own mask
     mask_transforms = []
 
-    # Background noise on mask (replaces mask==0 with random noise)
-    bg_noise = extra_augmentation_config.get("background_noise_on_mask")
-    bg_noise_values = extra_augmentation_config.get("background_noise_on_mask_values")
-    if bg_noise:
-        p = bg_noise if isinstance(bg_noise, (int, float)) else 1.0
+    # Background noise on mask regions
+    for noise_cfg in extra_augmentation_config.get("background_noise_transforms", []):
+        target_mask_values = noise_cfg.get("target_mask_values", [0])
+        p = noise_cfg.get("p", 1.0)
         mask_transforms.append(
             BackgroundNoiseTransform(
                 p=float(p),
-                target_mask_values=bg_noise_values,
+                target_mask_values=target_mask_values,
             )
         )
 
