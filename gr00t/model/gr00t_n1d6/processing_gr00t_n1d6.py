@@ -371,7 +371,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         else:
             language = content.text
 
-        vlm_inputs, stacked_masks = self._get_vlm_inputs(
+        vlm_inputs = self._get_vlm_inputs(
             image_keys=image_keys,
             images=content.images,
             masks=content.masks,
@@ -386,8 +386,6 @@ class Gr00tN1d6Processor(BaseProcessor):
             transformed_inputs["action"] = normalized_actions.to(torch.get_default_dtype())
         # Add VLM inputs
         transformed_inputs.update(vlm_inputs)
-        if stacked_masks is not None:
-            transformed_inputs["masks"] = stacked_masks
         if action_mask is not None:
             transformed_inputs["action_mask"] = action_mask
         transformed_inputs["embodiment_id"] = self.embodiment_id_mapping[embodiment_tag.value]
@@ -402,7 +400,6 @@ class Gr00tN1d6Processor(BaseProcessor):
         language: str,
     ):
         temporal_stacked_images = {}
-        temporal_stacked_masks = {} if masks else None
 
         if self.use_albumentations:
             # Use albumentations transforms (all augmentations are in the pipeline)
@@ -414,12 +411,10 @@ class Gr00tN1d6Processor(BaseProcessor):
 
                 # Apply transforms with replay for consistency
                 # Note: background_noise, masked_region_transforms etc. are now in the pipeline
-                transformed_images, transformed_masks, replay = apply_with_replay(
+                transformed_images, replay = apply_with_replay(
                     image_transform, view_images, view_masks, replay
                 )
                 temporal_stacked_images[view] = torch.stack(transformed_images)  # (T, C, H, W)
-                if transformed_masks is not None:
-                    temporal_stacked_masks[view] = torch.stack(transformed_masks)  # (T, H, W)
         else:
             if masks is not None:
                 raise ValueError(
@@ -444,14 +439,9 @@ class Gr00tN1d6Processor(BaseProcessor):
             .flatten(0, 1)
             .numpy()
         )  # (T*V, C, H, W), Eagle processor expects numpy array
-        stacked_masks = None
-        if temporal_stacked_masks is not None:
-            stacked_masks = torch.stack(
-                [temporal_stacked_masks[view] for view in image_keys], dim=1
-            ).flatten(0, 1)
 
         vlm_inputs = self._apply_vlm_processing(stacked_images, language)
-        return vlm_inputs, stacked_masks
+        return vlm_inputs
 
     def save_pretrained(self, save_directory: str | Path) -> list[Path]:
         # dump modality configs to dict using the recursive function

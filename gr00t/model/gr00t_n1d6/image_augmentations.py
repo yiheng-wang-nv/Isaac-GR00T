@@ -20,13 +20,11 @@ def apply_with_replay(transform, images, masks=None, replay=None):
         replay: Optional replay data for consistent transforms. If None, creates new replay.
 
     Returns:
-        tuple: (transformed_tensors_list, transformed_masks, replay_data)
+        tuple: (transformed_tensors_list, replay_data)
             - transformed_tensors_list: List of transformed torch tensors (C, H, W) as uint8
-            - transformed_masks: List of transformed torch tensors (H, W) or None if masks not provided
             - replay_data: Replay data for consistent transforms across images (None for regular Compose)
     """
     transformed_tensors = []
-    transformed_masks = [] if masks is not None else None
     current_replay = replay
 
     has_replay = hasattr(transform, "replay")
@@ -55,41 +53,27 @@ def apply_with_replay(transform, images, masks=None, replay=None):
         if has_replay:
             if current_replay is None:
                 # First image - create replay data
-                if mask_array is not None:
-                    augmented = transform(image=img_array, mask=mask_array)
-                else:
-                    augmented = transform(image=img_array)
-                current_replay = augmented["replay"]
+                augmented_image = transform(image=img_array)
+                current_replay = augmented_image["replay"]
             else:
                 # Subsequent images - use replay for consistent transforms
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
-                    if mask_array is not None:
-                        augmented = transform.replay(
-                            image=img_array, mask=mask_array, saved_augmentations=current_replay
-                        )
-                    else:
-                        augmented = transform.replay(
-                            image=img_array, saved_augmentations=current_replay
-                        )
+                    augmented_image = transform.replay(
+                        image=img_array, saved_augmentations=current_replay
+                    )
         else:
-            if mask_array is not None:
-                augmented = transform(image=img_array, mask=mask_array)
-            else:
-                augmented = transform(image=img_array)
+            augmented_image = transform(image=img_array)
 
-        img_result = augmented["image"]
-        if img_result.dtype == np.float32:
-            img_result = (img_result * 255).astype(np.uint8)
-        elif img_result.dtype != np.uint8:
-            raise ValueError(f"Unexpected image data type: {img_result.dtype}")
-        transformed_tensors.append(torch.from_numpy(img_result).permute(2, 0, 1))
+        img_array = augmented_image["image"]
+        if img_array.dtype == np.float32:
+            img_array = (img_array * 255).astype(np.uint8)
+        elif img_array.dtype != np.uint8:
+            raise ValueError(f"Unexpected data type: {img_array.dtype}")
+        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1)
+        transformed_tensors.append(img_tensor)
 
-        if mask_array is not None:
-            mask_result = augmented["mask"]
-            transformed_masks.append(torch.from_numpy(mask_result))
-
-    return transformed_tensors, transformed_masks, current_replay
+    return transformed_tensors, current_replay
 
 
 class MaskedColorTransform(A.ImageOnlyTransform):
