@@ -27,6 +27,7 @@ def apply_with_replay(transform, images, masks=None, replay=None):
     transformed_tensors = []
     current_replay = replay
 
+    # Check if transform supports replay (ReplayCompose)
     has_replay = hasattr(transform, "replay")
 
     # Get mask-based transforms (applied per-frame, not replayed)
@@ -71,6 +72,8 @@ def apply_with_replay(transform, images, masks=None, replay=None):
             img_array = (img_array * 255).astype(np.uint8)
         elif img_array.dtype != np.uint8:
             raise ValueError(f"Unexpected data type: {img_array.dtype}")
+
+        # Convert to torch tensor (C, H, W) as uint8
         img_tensor = torch.from_numpy(img_array).permute(2, 0, 1)
         transformed_tensors.append(img_tensor)
 
