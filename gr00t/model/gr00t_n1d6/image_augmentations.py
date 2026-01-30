@@ -115,9 +115,7 @@ class MaskedColorTransform(A.ImageOnlyTransform):
         # Random tint: semi-transparent overlay
         alpha = np.random.uniform(self.alpha_range[0], self.alpha_range[1])
         for c in range(3):
-            result[region_mask, c] = (
-                result[region_mask, c] * (1 - alpha) + random_color[c] * alpha
-            )
+            result[region_mask, c] = result[region_mask, c] * (1 - alpha) + random_color[c] * alpha
 
         return np.clip(result, 0, 255).astype(np.uint8)
 
