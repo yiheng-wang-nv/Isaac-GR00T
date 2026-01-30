@@ -120,10 +120,15 @@ def build_mask_only_transforms(extra_augmentation_config: dict):
     mask_transforms = []
     
     # Background noise on mask (replaces mask==0 with random noise)
-    bg_noise = extra_augmentation_config.get("background_noise_on_mask")
-    if bg_noise:
-        p = bg_noise if isinstance(bg_noise, (int, float)) else 1.0
-        mask_transforms.append(BackgroundNoiseTransform(p=float(p)))
+    for noise_cfg in extra_augmentation_config.get("background_noise_transforms", []):
+        target_mask_values = noise_cfg.get("target_mask_values", [0])
+        p = noise_cfg.get("p", 1.0)
+        mask_transforms.append(
+            BackgroundNoiseTransform(
+                p=float(p),
+                target_mask_values=target_mask_values,
+            )
+        )
     
     # Masked region transforms
     for transform_cfg in extra_augmentation_config.get("masked_region_transforms", []):
@@ -763,8 +768,9 @@ def main() -> None:
         default=None,
         help=(
             "JSON config for extra augmentations. Example: "
-            '\'{"background_noise_on_mask": true, "masked_region_transforms": '
-            '[{"type": "hue_shift", "target_mask_values": [5], "p": 0.5}]}\''
+            '\'{"background_noise_transforms": [{"target_mask_values": [0], "p": 1.0}], '
+            '"masked_region_transforms": [{"target_mask_values": [5], "p": 0.5, '
+            '"alpha_range": [0, 1]}]}\''
         ),
     )
     parser.add_argument("--max_state_dim", type=int, default=None)

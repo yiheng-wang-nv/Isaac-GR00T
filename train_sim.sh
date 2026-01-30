@@ -29,7 +29,7 @@ python gr00t/experiment/launch_finetune.py \
     --tune_diffusion_model \
     --color_jitter_params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
     --dataloader_num_workers 8 \
-    --extra_augmentation_config '{"background_noise_on_mask": 0.5, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [0], "p": 0.5, "alpha_range": [0, 1]}, {"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}'
+    --extra_augmentation_config '{"background_noise_transforms": [{"target_mask_values": [0], "p": 0.5}], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [0], "p": 0.5}]}'
 
 
 
@@ -38,7 +38,7 @@ python scripts/dump_dataloader_transforms.py \
   --dataset_path /localhome/local-vennw/code/orca-template1-dev/sim-pick-and-place/stage1_3_cosmos/lerobot/ \
   --embodiment_tag NEW_EMBODIMENT \
   --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
-  --extra_augmentation_config '{"background_noise_on_mask": 0.5, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}' \
+  --extra_augmentation_config '{"background_noise_transforms": [{"target_mask_values": [0], "p": 0.5}], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [0], "p": 0.5}]}' \
   --output_dir /localhome/local-vennw/code/Isaac-GR00T/debug_augment_vis \
   --save_video \
   --video_side_by_side \
@@ -50,7 +50,7 @@ python scripts/dump_dataloader_transforms.py \
   --dataset_path /localhome/local-vennw/code/orca-template1-dev/sim-pick-and-place/stage1_3_cosmos/lerobot/ \
   --embodiment_tag NEW_EMBODIMENT \
   --modality_config_path /localhome/local-vennw/code/Isaac-GR00T/orca_g1_locomanip_modality_config.py \
-  --extra_augmentation_config '{"background_noise_on_mask": 0.5, "background_noise_on_mask_values": [0], "masked_region_transforms": [{"target_mask_values": [0], "p": 0.5, "alpha_range": [0, 1]}, {"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}]}' \
+  --extra_augmentation_config '{"background_noise_transforms": [{"target_mask_values": [0], "p": 0.5}], "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [5], "p": 1.0, "alpha_range": [0, 1]}, {"target_mask_values": [0], "p": 0.5}]}' \
   --save_grid \
   --grid_num_frames 9 \
   --no_resize \
