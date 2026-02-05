@@ -340,7 +340,7 @@ galbot_g1_config = {
     ),
     # Action modality: 16-step prediction horizon
     "action": ModalityConfig(
-        delta_indices=list(range(0, 16)),  # Predict 16 steps into the future
+        delta_indices=list(range(0, 32)),  # Predict 16 steps into the future
         modality_keys=[
             "left_arm_joint",
             "left_gripper_joint",
@@ -350,25 +350,25 @@ galbot_g1_config = {
         action_configs=[
             # left_arm: use absolute actions (matching old config with min_max normalization)
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.REALATIVE,
                 type=ActionType.NON_EEF,  # Joint space control
                 format=ActionFormat.DEFAULT,
             ),
             # left_gripper: use absolute actions
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.REALATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
             # right_arm: use absolute actions
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.REALATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
             # right_gripper: use absolute actions
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.REALATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
