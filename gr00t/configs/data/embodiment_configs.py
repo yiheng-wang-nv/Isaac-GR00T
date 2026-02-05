@@ -350,25 +350,25 @@ galbot_g1_config = {
         action_configs=[
             # left_arm: use absolute actions (matching old config with min_max normalization)
             ActionConfig(
-                rep=ActionRepresentation.REALATIVE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,  # Joint space control
                 format=ActionFormat.DEFAULT,
             ),
             # left_gripper: use absolute actions
             ActionConfig(
-                rep=ActionRepresentation.REALATIVE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
             # right_arm: use absolute actions
             ActionConfig(
-                rep=ActionRepresentation.REALATIVE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
             # right_gripper: use absolute actions
             ActionConfig(
-                rep=ActionRepresentation.REALATIVE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
