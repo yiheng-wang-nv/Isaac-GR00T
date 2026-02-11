@@ -170,6 +170,101 @@ class BackgroundNoiseTransform(A.ImageOnlyTransform):
         return ("target_mask_values",)
 
 
+class ChangeBackgroundTransform(A.ImageOnlyTransform):
+    """Replace specified mask regions with images from a pre-extracted template frames folder.
+
+    On each call, a random image is loaded from the template folder and used to replace
+    the background (pixels where mask value matches target_mask_values).
+
+    Use extract_template_frames.py to pre-extract frames from a template video.
+
+    Args:
+        template_folder: Path to folder containing extracted template frame images (.jpg/.png).
+        p: Probability of applying the transform
+        target_mask_values: Mask values to replace with template (default: [0])
+        feather_radius: Gaussian blur radius for soft mask edges (0 = hard cut)
+    """
+
+    def __init__(
+        self,
+        template_folder: str,
+        p: float = 1.0,
+        target_mask_values: Sequence[int] | None = None,
+        feather_radius: int = 3,
+        always_apply: bool | None = None,
+    ):
+        super().__init__(p=p, always_apply=always_apply)
+        self.template_folder = template_folder
+        self.target_mask_values = [0] if target_mask_values is None else list(target_mask_values)
+        self.feather_radius = feather_radius
+
+        # Scan folder for image files
+        import os
+        import glob as glob_mod
+        self.image_paths = sorted(
+            glob_mod.glob(os.path.join(template_folder, "*.jpg"))
+            + glob_mod.glob(os.path.join(template_folder, "*.png"))
+        )
+        if len(self.image_paths) == 0:
+            raise RuntimeError(f"No images found in template folder: {template_folder}")
+        print(f"[ChangeBackgroundTransform] Found {len(self.image_paths)} template images in {template_folder}")
+
+    @staticmethod
+    def _center_bottom_crop(frame: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        """Crop frame: horizontally centered, vertically bottom-aligned."""
+        h, w = frame.shape[:2]
+        scale = max(target_h / h, target_w / w)
+        if scale > 1.0:
+            new_h, new_w = int(h * scale + 0.5), int(w * scale + 0.5)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            h, w = frame.shape[:2]
+        x0 = (w - target_w) // 2
+        y0 = h - target_h
+        return frame[y0 : y0 + target_h, x0 : x0 + target_w]
+
+    def apply(self, img: np.ndarray, mask: np.ndarray = None, **params) -> np.ndarray:
+        if mask is None:
+            return img
+
+        result = img.copy()
+        mask_2d = mask[..., 0] if mask.ndim == 3 else mask
+        background = np.isin(mask_2d, self.target_mask_values)
+
+        if not background.any():
+            return result
+
+        # Pick a random template image and load it
+        idx = np.random.randint(0, len(self.image_paths))
+        tpl_bgr = cv2.imread(self.image_paths[idx])
+        if tpl_bgr is None:
+            return result
+        tpl_frame = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2RGB)
+
+        # Crop template frame to match image size
+        target_h, target_w = img.shape[:2]
+        tpl_cropped = self._center_bottom_crop(tpl_frame, target_h, target_w)
+
+        if self.feather_radius > 0:
+            # Soft blending at mask edges
+            fg_mask_uint8 = (~background).astype(np.uint8) * 255
+            ksize = self.feather_radius * 2 + 1
+            alpha_blur = cv2.GaussianBlur(fg_mask_uint8, (ksize, ksize), 0)
+            alpha = alpha_blur.astype(np.float32) / 255.0
+            alpha_3 = alpha[:, :, None]
+            result = (img.astype(np.float32) * alpha_3 +
+                      tpl_cropped.astype(np.float32) * (1.0 - alpha_3)).astype(np.uint8)
+        else:
+            result[background] = tpl_cropped[background]
+
+        return result
+
+    def get_params_dependent_on_data(self, params, data) -> dict:
+        return {"mask": data.get("mask")}
+
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("template_folder", "target_mask_values", "feather_radius")
+
+
 class FractionalRandomCrop(A.DualTransform):
     """Crop a random part of the input based on fractions while maintaining aspect ratio.
 
@@ -323,6 +418,11 @@ def build_image_transformations_albumentations(
             - "background_noise_transforms": list of dicts, each with:
                 - "target_mask_values": list of int (e.g., [0])
                 - "p": float (probability of applying transform)
+            - "change_background_transforms": list of dicts, each with:
+                - "template_folder": str (path to folder of pre-extracted template images .jpg/.png)
+                - "target_mask_values": list of int (e.g., [0])
+                - "p": float (probability of applying transform)
+                - "feather_radius": int (blur radius for soft edges, default 3, 0=hard cut)
             - "masked_region_transforms": list of dicts, each with:
                 - "target_mask_values": list of int (e.g., [4] or [5])
                 - "p": float (probability of applying transform)
@@ -383,6 +483,21 @@ def build_image_transformations_albumentations(
             BackgroundNoiseTransform(
                 p=float(p),
                 target_mask_values=target_mask_values,
+            )
+        )
+
+    # Change background using pre-extracted template frame images
+    for bg_cfg in extra_augmentation_config.get("change_background_transforms", []):
+        template_folder = bg_cfg["template_folder"]
+        target_mask_values = bg_cfg.get("target_mask_values", [0])
+        p = bg_cfg.get("p", 1.0)
+        feather_radius = bg_cfg.get("feather_radius", 3)
+        mask_transforms.append(
+            ChangeBackgroundTransform(
+                template_folder=template_folder,
+                p=float(p),
+                target_mask_values=target_mask_values,
+                feather_radius=feather_radius,
             )
         )
 

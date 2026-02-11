@@ -74,12 +74,17 @@ class FinetuneConfig:
       - "background_noise_transforms": list of dicts for noise on mask regions
           - "target_mask_values": list of int (e.g., [0])
           - "p": float (probability of applying)
+      - "change_background_transforms": list of dicts for replacing background with template images
+          - "template_folder": str (path to folder of pre-extracted template frame images)
+          - "target_mask_values": list of int (e.g., [0])
+          - "p": float (probability of applying)
+          - "feather_radius": int (blur radius for soft edges, default 3, 0=hard cut)
       - "masked_region_transforms": list of dicts for color tint on mask regions
           - "target_mask_values": list of int (e.g., [4] or [5])
           - "p": float (probability of applying)
           - "alpha_range": [min, max] for random_tint intensity
 
-    Example: {"background_noise_transforms": [{"target_mask_values": [0], "p": 0.9}],
+    Example: {"change_background_transforms": [{"template_folder": "/path/to/template_frames", "target_mask_values": [0], "p": 0.95}],
               "masked_region_transforms": [{"target_mask_values": [4], "p": 1.0, "alpha_range": [0, 1]}]}
 
     If None, no extra augmentations are applied.

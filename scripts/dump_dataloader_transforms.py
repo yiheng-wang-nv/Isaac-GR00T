@@ -28,6 +28,7 @@ from gr00t.data.dataset.lerobot_episode_loader import LeRobotEpisodeLoader
 from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
 from gr00t.model.gr00t_n1d6.image_augmentations import (
     BackgroundNoiseTransform,
+    ChangeBackgroundTransform,
     MaskedColorTransform,
 )
 
@@ -130,6 +131,21 @@ def build_mask_only_transforms(extra_augmentation_config: dict):
             )
         )
     
+    # Change background using pre-extracted template frame images
+    for bg_cfg in extra_augmentation_config.get("change_background_transforms", []):
+        template_folder = bg_cfg["template_folder"]
+        target_mask_values = bg_cfg.get("target_mask_values", [0])
+        p = bg_cfg.get("p", 1.0)
+        feather_radius = bg_cfg.get("feather_radius", 3)
+        mask_transforms.append(
+            ChangeBackgroundTransform(
+                template_folder=template_folder,
+                p=float(p),
+                target_mask_values=target_mask_values,
+                feather_radius=feather_radius,
+            )
+        )
+
     # Masked region transforms
     for transform_cfg in extra_augmentation_config.get("masked_region_transforms", []):
         target_mask_values = transform_cfg.get("target_mask_values", [])
@@ -248,6 +264,13 @@ def build_config_from_args(args: argparse.Namespace) -> Config:
     config.model.backbone_trainable_params_fp32 = True
     config.model.use_relative_action = True
 
+    # Infer action_horizon from modality config delta_indices to avoid dimension mismatch
+    modality_cfg = config.data.modality_configs[embodiment_tag]
+    action_delta_indices = modality_cfg["action"].delta_indices
+    inferred_action_horizon = max(action_delta_indices) - min(action_delta_indices) + 1
+    if inferred_action_horizon > config.model.action_horizon:
+        config.model.action_horizon = inferred_action_horizon
+
     return config
 
 
@@ -355,19 +378,25 @@ def _create_grid_comparison(
     transformed: list[Image.Image | np.ndarray],
     grid_size: int = 3,
     cell_width: int | None = None,
+    grid_rows: int | None = None,
+    grid_cols: int | None = None,
 ) -> Image.Image:
-    """Create a grid comparison image (e.g., 3x3) with original|transformed pairs.
+    """Create a grid comparison image with original|transformed pairs.
     
     Args:
         originals: List of original images
         transformed: List of transformed images
-        grid_size: Number of rows and columns (default 3 for 3x3 = 9 cells)
+        grid_size: Number of rows and columns when grid_rows/grid_cols not specified
         cell_width: Width for each cell (original + transformed). If None, auto-compute.
+        grid_rows: Explicit number of rows (overrides grid_size)
+        grid_cols: Explicit number of columns (overrides grid_size)
     
     Returns:
         Grid image with original on left, transformed on right for each cell
     """
-    n_cells = grid_size * grid_size
+    rows = grid_rows if grid_rows is not None else grid_size
+    cols = grid_cols if grid_cols is not None else grid_size
+    n_cells = rows * cols
     
     # Convert all to PIL Images
     def to_pil(img):
@@ -397,13 +426,13 @@ def _create_grid_comparison(
     single_h = cell_height
     
     # Create the grid
-    grid_w = cell_width * grid_size
-    grid_h = cell_height * grid_size
+    grid_w = cell_width * cols
+    grid_h = cell_height * rows
     grid_img = Image.new("RGB", (grid_w, grid_h), (0, 0, 0))
     
     for idx in range(min(len(orig_pils), n_cells)):
-        row = idx // grid_size
-        col = idx % grid_size
+        row = idx // cols
+        col = idx % cols
         
         orig = orig_pils[idx].resize((single_w, single_h), Image.BILINEAR)
         trans = trans_pils[idx].resize((single_w, single_h), Image.BILINEAR)
@@ -492,10 +521,8 @@ def save_grid_comparison(
         )
         transformed_images = vlm_inputs["vlm_content"]["images"]
     
-    # Determine grid size (ceil of sqrt)
-    grid_size = int(np.ceil(np.sqrt(num_frames)))
-    
-    grid_img = _create_grid_comparison(original_images, transformed_images, grid_size=grid_size)
+    # Use actual frame count as grid_size so layout is num_frames x 1 (no empty black cells)
+    grid_img = _create_grid_comparison(original_images, transformed_images, grid_cols=1, grid_rows=num_frames)
     
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_path_obj = Path(dataset_path)
@@ -504,7 +531,7 @@ def save_grid_comparison(
     default_name = f"{dataset_name}_episode_{episode_index:06d}_{view_tag}_grid_{num_frames}frames.png"
     output_path = output_dir / (output_name or default_name)
     grid_img.save(output_path)
-    print(f"Saved grid comparison ({grid_size}x{grid_size}, {num_frames} frames) to {output_path.resolve()}")
+    print(f"Saved grid comparison ({num_frames} frames, {num_frames}x1) to {output_path.resolve()}")
 
 
 def _write_video(
@@ -906,6 +933,9 @@ def main() -> None:
         save_comparison_per_dataset(
             config, out_dir, episode_index=args.comparison_episode_index
         )
+        return
+    # Skip sample_and_save if we already did save_video or save_grid
+    if args.save_video or args.save_grid:
         return
     sample_and_save(config, out_dir, args.num_samples, args.seed)
 
