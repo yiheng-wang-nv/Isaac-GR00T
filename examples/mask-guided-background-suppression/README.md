@@ -58,7 +58,7 @@ Multiple transforms of each type can be specified (e.g., different mask values w
 
 ## Quick Start with Demo Data
 
-The included demo dataset `demo_data/cube_to_bowl_5_with_mask` contains a single episode with front and wrist camera views, along with pre-generated segmentation masks.
+The included demo dataset `demo_data/cube_to_bowl_5_with_mask` contains a single episode with front and wrist camera views, along with pre-generated segmentation masks. The masks were generated using [SAM 3](https://github.com/facebookresearch/sam3) with the text prompt `"background"`, then converted so that background pixels = `0` and foreground pixels = `1` (see [Generating mask files](#generating-mask-files) below).
 
 ### 1. Background noise only
 
@@ -87,7 +87,7 @@ uv run python test_extra_augmentation.py \
 
 Both commands save side-by-side comparison images (**Original | Augmented | Mask**) under `output_dir/<view_name>/`, with frames sampled evenly across the episode.
 
-### 2. Fine-tune with mask-guided augmentation
+### 3. Fine-tune with mask-guided augmentation
 
 ```bash
 export NUM_GPUS=8
@@ -117,7 +117,7 @@ torchrun --nproc_per_node=$NUM_GPUS --master_port=29500 \
 
 To use mask-guided augmentation with your own dataset, ensure:
 
-1. **Mask files** are stored as `.npz` files under a `masks/` directory, following the same chunk/episode structure as videos:
+1. **Mask files** are stored as `.npz` files under a `masks/` directory, following the same chunk/episode structure as videos. Each `.npz` contains a single `uint8` array of shape `(num_frames, H, W)` where each pixel holds an integer semantic label (e.g., `0` = background, `1` = object A, `2` = object B).
 
    ```
    masks/
@@ -125,6 +125,8 @@ To use mask-guided augmentation with your own dataset, ensure:
        └── observation.images.front/
            └── episode_000000_masks.npz
    ```
+
+   See [Generating mask files](#generating-mask-files) below for how to produce these files.
 
 2. **`info.json`** includes a `mask_path` template:
 
@@ -160,6 +162,32 @@ To use mask-guided augmentation with your own dataset, ensure:
        }
    }
    ```
+
+---
+
+## Generating Mask Files
+
+You can generate mask files using any video segmentation model that produces per-pixel labels. The demo masks in this example were created with [SAM 3](https://github.com/facebookresearch/sam3) (see the [video predictor example](https://github.com/facebookresearch/sam3/blob/main/examples/sam3_video_predictor_example.ipynb) for SAM 3 usage). The workflow was:
+
+1. Run SAM 3 on each episode video with a text prompt such as `"background"`. SAM 3 returns per-frame binary masks via `propagate_in_video`.
+2. Convert the binary masks into the label format expected by this pipeline (`0` = background, non-zero = foreground categories) and save as `.npz`:
+
+```python
+import numpy as np
+
+# sam3_binary_masks: (num_frames, H, W) bool array from SAM 3 (True where prompt matched)
+# For a "background" prompt, invert so that background=0 and foreground=1:
+label_masks = (~sam3_binary_masks).astype(np.uint8)
+
+# For multiple prompts, merge into one label array instead:
+# label_masks = np.zeros((num_frames, H, W), dtype=np.uint8)
+# label_masks[prompt_0_masks] = 1
+# label_masks[prompt_1_masks] = 2
+
+np.savez_compressed("episode_000000_masks.npz", label_masks)
+```
+
+The pipeline loads the array from the `.npz` file (it expects the key `arr_0`, which is the default for `np.savez_compressed`). A single `.npy` file containing the `(num_frames, H, W)` array also works.
 
 ---
 
