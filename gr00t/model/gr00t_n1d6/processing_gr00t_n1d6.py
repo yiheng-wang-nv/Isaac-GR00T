@@ -21,6 +21,7 @@ from transformers.utils import cached_file
 
 from .image_augmentations import (
     apply_with_replay,
+    apply_with_replay_and_mask,
     build_image_transformations,
     build_image_transformations_albumentations,
 )
@@ -128,6 +129,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
         use_albumentations: bool = False,
+        background_noise_on_mask: bool = False,
         use_relative_action: bool = False,
         embodiment_id_mapping: dict[str, int] | None = None,
         transformers_loading_kwargs: dict = {"trust_remote_code": True},
@@ -149,6 +151,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         self.clip_outliers = clip_outliers
         self.apply_sincos_state_encoding = apply_sincos_state_encoding
         self.use_relative_action = use_relative_action
+        self.background_noise_on_mask = background_noise_on_mask
 
         # Save VLM settings
         self.formalize_language = formalize_language
@@ -369,9 +372,10 @@ class Gr00tN1d6Processor(BaseProcessor):
         else:
             language = content.text
 
-        vlm_inputs = self._get_vlm_inputs(
+        vlm_inputs, stacked_masks = self._get_vlm_inputs(
             image_keys=image_keys,
             images=content.images,
+            masks=content.masks,
             image_transform=image_transform,
             language=language,
         )
@@ -383,6 +387,8 @@ class Gr00tN1d6Processor(BaseProcessor):
             transformed_inputs["action"] = normalized_actions.to(torch.get_default_dtype())
         # Add VLM inputs
         transformed_inputs.update(vlm_inputs)
+        if stacked_masks is not None:
+            transformed_inputs["masks"] = stacked_masks
         if action_mask is not None:
             transformed_inputs["action_mask"] = action_mask
         transformed_inputs["embodiment_id"] = self.embodiment_id_mapping[embodiment_tag.value]
@@ -392,22 +398,35 @@ class Gr00tN1d6Processor(BaseProcessor):
         self,
         image_keys: list[str],
         images: list[Image.Image],
+        masks: dict[str, list[np.ndarray]] | None,
         image_transform: transforms.Compose | A.Compose,
         language: str,
     ):
         temporal_stacked_images = {}
+        temporal_stacked_masks = {} if masks else None
 
         if self.use_albumentations:
             # Use albumentations transforms
             replay = None
             for view in image_keys:
                 assert view in images, f"{view} not in {images}"
+                view_masks = masks.get(view) if masks else None
+                if self.background_noise_on_mask and view_masks is not None:
+                    view_images = self._apply_background_noise(images[view], view_masks)
+                else:
+                    view_images = images[view]
                 # Apply transforms with replay for consistency
-                transformed_images, replay = apply_with_replay(
-                    image_transform, images[view], replay
+                transformed_images, transformed_masks, replay = apply_with_replay_and_mask(
+                    image_transform, view_images, view_masks, replay
                 )
                 temporal_stacked_images[view] = torch.stack(transformed_images)  # (T, C, H, W)
+                if transformed_masks is not None:
+                    temporal_stacked_masks[view] = torch.stack(transformed_masks)  # (T, H, W)
         else:
+            if masks is not None:
+                raise ValueError(
+                    "Mask transforms require albumentations. Set use_albumentations_transforms=True."
+                )
             # Use torchvision transforms
             for view in image_keys:
                 assert view in images, f"{view} not in {images}"
@@ -427,9 +446,35 @@ class Gr00tN1d6Processor(BaseProcessor):
             .flatten(0, 1)
             .numpy()
         )  # (T*V, C, H, W), Eagle processor expects numpy array
+        stacked_masks = None
+        if temporal_stacked_masks is not None:
+            stacked_masks = torch.stack(
+                [temporal_stacked_masks[view] for view in image_keys], dim=1
+            ).flatten(0, 1)
 
         vlm_inputs = self._apply_vlm_processing(stacked_images, language)
-        return vlm_inputs
+        return vlm_inputs, stacked_masks
+
+    @staticmethod
+    def _apply_background_noise(
+        images: list[Image.Image], masks: list[np.ndarray]
+    ) -> list[np.ndarray]:
+        """Replace background (mask == 0) with random noise."""
+        if len(images) != len(masks):
+            raise ValueError(
+                f"Number of masks ({len(masks)}) must match number of images ({len(images)})"
+            )
+        noised_images = []
+        for img, mask in zip(images, masks):
+            img_array = np.array(img)
+            mask_array = np.array(mask)
+            if mask_array.ndim == 3:
+                mask_array = mask_array[..., 0]
+            noise = np.random.randint(0, 256, size=img_array.shape, dtype=np.uint8)
+            background = mask_array == 0
+            img_array[background] = noise[background]
+            noised_images.append(img_array)
+        return noised_images
 
     def save_pretrained(self, save_directory: str | Path) -> list[Path]:
         # dump modality configs to dict using the recursive function
@@ -450,6 +495,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "color_jitter_params": self.color_jitter_params,
                 "shortest_image_edge": self.shortest_image_edge,
                 "crop_fraction": self.crop_fraction,
+                "background_noise_on_mask": self.background_noise_on_mask,
                 # VLM settings
                 "model_name": self.model_name,
                 "model_type": self.model_type,

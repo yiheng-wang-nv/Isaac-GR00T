@@ -19,7 +19,7 @@ class FinetuneConfig:
     base_model_path: str
     """Path to the pretrained base model checkpoint (e.g., Hugging Face model hub or local directory)."""
 
-    dataset_path: str
+    dataset_path: list[str]
     """Path to the dataset root directory containing trajectory data for fine-tuning."""
 
     embodiment_tag: EmbodimentTag
@@ -66,6 +66,8 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
+    background_noise_on_mask: bool = False
+    """If True, replace background (mask==0) with random noise before augmentations."""
 
     # --- Training Configuration ---
     global_batch_size: int = 64

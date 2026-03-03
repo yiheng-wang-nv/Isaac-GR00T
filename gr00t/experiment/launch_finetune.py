@@ -43,7 +43,7 @@ if __name__ == "__main__":
                 "download_cache": False,
                 "datasets": [
                     {
-                        "dataset_paths": [ft_config.dataset_path],
+                        "dataset_paths": ft_config.dataset_path,
                         "mix_ratio": 1.0,
                         "embodiment_tag": embodiment_tag,
                     }
@@ -61,6 +61,7 @@ if __name__ == "__main__":
     config.model.state_dropout_prob = ft_config.state_dropout_prob
     config.model.random_rotation_angle = ft_config.random_rotation_angle
     config.model.color_jitter_params = ft_config.color_jitter_params
+    config.model.background_noise_on_mask = ft_config.background_noise_on_mask
 
     config.model.load_bf16 = False
     config.model.reproject_vision = False
