@@ -44,7 +44,7 @@ class StateActionProcessor:
     def __init__(
         self,
         modality_configs: dict[str, dict[str, ModalityConfig]],
-        statistics: dict[str, dict[str, dict[str, dict[str, list[float]]]]] | None = None,
+        statistics: (dict[str, dict[str, dict[str, dict[str, list[float]]]]] | None) = None,
         use_percentiles: bool = False,
         clip_outliers: bool = True,
         apply_sincos_state_encoding: bool = False,
@@ -210,7 +210,10 @@ class StateActionProcessor:
 
             # Strategy 2: Mean/std normalization
             elif (
-                hasattr(self.modality_configs[embodiment_tag]["state"], "mean_std_embedding_keys")
+                hasattr(
+                    self.modality_configs[embodiment_tag]["state"],
+                    "mean_std_embedding_keys",
+                )
                 and self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
                 and joint_group
                 in self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
@@ -273,7 +276,10 @@ class StateActionProcessor:
 
             # Reverse mean/std normalization
             elif (
-                hasattr(self.modality_configs[embodiment_tag]["state"], "mean_std_embedding_keys")
+                hasattr(
+                    self.modality_configs[embodiment_tag]["state"],
+                    "mean_std_embedding_keys",
+                )
                 and self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
                 and joint_group
                 in self.modality_configs[embodiment_tag]["state"].mean_std_embedding_keys
@@ -609,21 +615,8 @@ class StateActionProcessor:
         assert reference_state.ndim == 1, f"Expected state shape (D,), got {reference_state.shape}"
 
         if action_type == ActionType.EEF:
-            assert action.shape[1] == 9, (
-                f"Expected action dim 9 (xyz + rot6d) for EEF, got {action.shape[1]}"
-            )
-
-            action_chunking = EndEffectorActionChunk(
-                [
-                    EndEffectorPose(translation=m[:3], rotation=m[3:], rotation_type="rot6d")
-                    for m in action
-                ]
-            )
-            reference_frame = EndEffectorPose(
-                translation=reference_state[:3],
-                rotation=reference_state[3:],
-                rotation_type="rot6d",
-            )
+            action_chunking = EndEffectorActionChunk.from_array(action, action_format)
+            reference_frame = EndEffectorPose.from_action_format(reference_state, action_format)
 
         elif action_type == ActionType.NON_EEF:
             action_chunking = JointActionChunk([JointPose(m) for m in action])
@@ -652,21 +645,8 @@ class StateActionProcessor:
         )
 
         if action_type == ActionType.EEF:
-            assert action.shape[1] == 9, (
-                f"Expected action dim 9 (xyz + rot6d) for EEF, got {action.shape[1]}"
-            )
-
-            rel_action = EndEffectorActionChunk(
-                [
-                    EndEffectorPose(translation=m[:3], rotation=m[3:], rotation_type="rot6d")
-                    for m in action
-                ]
-            )
-            reference_frame = EndEffectorPose(
-                translation=reference_state[:3],
-                rotation=reference_state[3:],
-                rotation_type="rot6d",
-            )
+            rel_action = EndEffectorActionChunk.from_array(action, action_format)
+            reference_frame = EndEffectorPose.from_action_format(reference_state, action_format)
 
         elif action_type == ActionType.NON_EEF:
             rel_action = JointActionChunk([JointPose(pose) for pose in action])

@@ -4,7 +4,7 @@ Docker configuration for building and running a containerized GR00T environment 
 
 ## Prerequisites
 
-- Docker (version 20.10+)
+- Docker (version 20.10+) and [perform post-installation setup](https://docs.docker.com/engine/install/linux-postinstall/) so you can run Docker commands without sudo. If you skip this setup, prefix the Docker commands below with `sudo`.
 - NVIDIA Container Toolkit ([installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html))
 - NVIDIA GPU with compatible drivers
 - Bash shell
@@ -15,7 +15,7 @@ Docker configuration for building and running a containerized GR00T environment 
 Make sure you are using a bash environment:
 
 ```bash
-sudo bash build.sh
+bash build.sh
 ```
 
 The build process uses `nvcr.io/nvidia/pytorch:25.04-py3` as the base image, installs all dependencies, and sets up the GR00T codebase at `/workspace/gr00t/`.
@@ -24,17 +24,48 @@ The build process uses `nvcr.io/nvidia/pytorch:25.04-py3` as the base image, ins
 
 **Interactive shell (uses code baked into image):**
 ```bash
-sudo docker run -it --rm --gpus all gr00t-dev /bin/bash
+docker run -it --rm --gpus all \
+    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+    gr00t-dev
 ```
 
 **Development mode (mounts local codebase for live editing):**
 ```bash
-sudo docker run -it --rm --gpus all \
+docker run -it --rm --gpus all \
+    --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
     -v $(pwd)/..:/workspace/gr00t \
-    gr00t-dev /bin/bash
+    gr00t-dev bash -c "uv pip install -e . && bash"
 ```
-**Run this from the `docker/` directory. Changes to your local GR00T code will be immediately reflected inside the container.**
 
+## Thor Container (Jetson Thor / CUDA 13)
+
+The `gr00t-thor` image is built from `scripts/deployment/thor/Dockerfile` for Jetson Thor with CUDA 13 support:
+
+```bash
+bash build.sh --profile=thor
+```
+
+For full Thor usage instructions (inference, benchmarks, bare metal setup), see the [Deployment & Inference Guide](../scripts/deployment/README.md#jetson-thor-setup).
+
+## Spark Container (DGX Spark / CUDA 13)
+
+The `gr00t-spark` image is built from `scripts/deployment/spark/Dockerfile` for DGX Spark with CUDA 13 support:
+
+```bash
+bash build.sh --profile=spark
+```
+
+For full Spark usage instructions (inference, benchmarks, bare metal setup), see the [Deployment & Inference Guide](../scripts/deployment/README.md#dgx-spark-setup).
+
+## Orin Container (Jetson Orin / CUDA 12.6)
+
+The `gr00t-orin` image is built from `scripts/deployment/orin/Dockerfile` for Jetson Orin (JetPack 6.2, CUDA 12.6, Python 3.10):
+
+```bash
+bash build.sh --profile=orin
+```
+
+For full Orin usage instructions (inference, benchmarks, bare metal setup), see the [Deployment & Inference Guide](../scripts/deployment/README.md#jetson-orin-setup).
 
 ## Troubleshooting
 

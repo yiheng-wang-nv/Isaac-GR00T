@@ -110,15 +110,14 @@ class VideoRecorder:
         if not self.is_ready():
             return
 
-        # Flush stream
-        for packet in self.stream.encode():
-            self.container.mux(packet)
-
-        # Close the file
-        self.container.close()
-
-        # reset runtime parameters
-        self._reset_state()
+        try:
+            # Flush stream
+            for packet in self.stream.encode():
+                self.container.mux(packet)
+        finally:
+            # Always close the file and reset state, even if flushing fails
+            self.container.close()
+            self._reset_state()
 
 
 class VideoRecordingWrapper(gym.Wrapper):
@@ -411,7 +410,13 @@ class VideoRecordingWrapper(gym.Wrapper):
 
                 # Add text
                 cv2.putText(
-                    frame, language, (text_x, text_y), font, font_scale, font_color, font_thickness
+                    frame,
+                    language,
+                    (text_x, text_y),
+                    font,
+                    font_scale,
+                    font_color,
+                    font_thickness,
                 )
 
             self.video_recorder.write_frame(frame)

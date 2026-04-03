@@ -97,23 +97,61 @@ git submodule update --init --recursive
 
 ### Set Up the Environment
 
-GR00T uses [uv](https://github.com/astral-sh/uv) for fast, reproducible dependency management.
+GR00T uses [uv](https://github.com/astral-sh/uv) for fast, reproducible dependency management. Each supported platform has its own dependency configuration under `scripts/deployment/`.
 
-> **Requirement:** uv **v0.8.4+** is needed to parse `[tool.uv.extra-build-dependencies]` in `pyproject.toml` (required for building `flash-attn`).
+#### dGPU (Non-Jetson) — Default
 
-After installing uv, create the environment and install GR00T:
+```bash
+bash scripts/deployment/dgpu/install_deps.sh
+source .venv/bin/activate
+```
 
-```sh
-uv sync --python 3.10
+Or manually:
+```bash
+uv sync
 uv pip install -e .
 ```
 
-> Note: CUDA 12.4 is recommended and officially tested. However, CUDA 11.8 has also been verified to work.
-> In such cases, make sure to install a compatible version of `flash-attn` manually (e.g., `flash-attn==2.8.2` was confirmed working with CUDA 11.8).
+#### Jetson AGX Thor
 
-For a containerized setup that avoids system-level dependency conflicts, see our [Docker Setup Guide](docker/README.md).
+Tested with JetPack 7.1.
 
-For training and inference hardware recommendations (RTX PRO Servers, DGX, Jetson AGX Thor), see the [Hardware Recommendation Guide](getting_started/hardware_recommendation.md).
+```bash
+bash scripts/deployment/thor/install_deps.sh
+source .venv/bin/activate
+source scripts/activate_thor.sh
+```
+
+See the [Thor setup guide](scripts/deployment/README.md#jetson-thor-setup) for Docker and bare metal details.
+
+#### DGX Spark
+
+Tested with DGX Spark GB10.
+
+```bash
+bash scripts/deployment/spark/install_deps.sh
+source .venv/bin/activate
+source scripts/activate_spark.sh
+```
+
+See the [Spark setup guide](scripts/deployment/README.md#dgx-spark-setup) for Docker and bare metal details.
+
+#### Jetson Orin
+
+Tested with JetPack 6.2.
+
+```bash
+bash scripts/deployment/orin/install_deps.sh
+source .venv/bin/activate
+source scripts/activate_orin.sh
+```
+
+See the [Orin setup guide](scripts/deployment/README.md#jetson-orin-setup) for Docker and bare metal details.
+
+For a containerized setup on any platform, see the [Docker Setup Guide](docker/README.md).
+Use the Docker guide to build the image and open a container, and the [Deployment & Inference Guide](scripts/deployment/README.md) for copy-paste inference and benchmark commands.
+
+For training and inference hardware recommendations, see the [Hardware Recommendation Guide](getting_started/hardware_recommendation.md).
 
 ## Model Checkpoints
 
@@ -134,6 +172,9 @@ We also provide finetuned checkpoints for various robot platforms and benchmarks
 | GR00T-N1.6-fractal | [nvidia/GR00T-N1.6-3B](https://huggingface.co/nvidia/GR00T-N1.6-3B) | Fine-tuned on [Fractal dataset](https://www.tensorflow.org/datasets/catalog/fractal20220817_data) for Google robot on manipulation tasks | [nvidia/GR00T-N1.6-fractal](https://huggingface.co/nvidia/GR00T-N1.6-fractal) | [SimplerEnv](examples/SimplerEnv/README.md) |
 | GR00T-N1.6-BEHAVIOR1k | [nvidia/GR00T-N1.6-3B](https://huggingface.co/nvidia/GR00T-N1.6-3B) | Fine-tuned on [BEHAVIOR-1K](https://behavior.stanford.edu/) for Galaxea R1 Pro robot on loco-manipulation tasks | [nvidia/GR00T-N1.6-BEHAVIOR1k](https://huggingface.co/nvidia/GR00T-N1.6-BEHAVIOR1k) | [BEHAVIOR](examples/BEHAVIOR/README.md) |
 | GR00T-N1.6-G1-PnPAppleToPlate | [nvidia/GR00T-N1.6-3B](https://huggingface.co/nvidia/GR00T-N1.6-3B) | Fine-tuned for Unitree G1 loco-manipulation pick-and-place tasks | [nvidia/GR00T-N1.6-G1-PnPAppleToPlate](https://huggingface.co/nvidia/GR00T-N1.6-G1-PnPAppleToPlate) | [G1 LocoManipulation](examples/GR00T-WholeBodyControl/README.md) |
+| GR00T-N1.6-DROID | [nvidia/GR00T-N1.6-DROID](https://huggingface.co/nvidia/GR00T-N1.6-DROID) | Fine-tuned for DROID robot on manipulation tasks | [nvidia/GR00T-N1.6-DROID](https://huggingface.co/nvidia/GR00T-N1.6-DROID) | [DROID](examples/DROID/README.md) |
+
+
 
 ## Quick Start
 
@@ -175,6 +216,7 @@ GR00T-N1.6-3B inference timing (4 denoising steps, single view):
 | H100 | torch.compile | 4 ms | 23 ms | 11 ms | 38 ms | 26.3 Hz |
 | RTX 4090 | torch.compile | 2 ms | 25 ms | 17 ms | 44 ms | 22.8 Hz |
 | Thor | torch.compile | 5 ms | 39 ms | 61 ms | 105 ms | 9.5 Hz |
+| Spark | torch.compile | 2 ms | 33 ms | 54 ms | 89 ms | 11.2 Hz |
 
 For more details, please check our full [inference guide](scripts/deployment/README.md) for more details including faster inference with `TensorRT`
 
@@ -332,6 +374,24 @@ For the policy server, we reuse the project root's uv environment (same as finet
 You can use [the verification script](scripts/eval/check_sim_eval_ready.py) to verify that all dependencies and environments for simulation evaluation are properly configured.
 
 Please refer to each benchmark link below for more details.
+
+#### Adding a New Sim Benchmark
+
+Each sim benchmark registers its environments under a gym env_name with the format `{prefix}/{task_name}` (e.g., `libero_sim/LIVING_ROOM_SCENE2_put_soup_in_basket`). The evaluation framework uses the prefix to look up the corresponding `EmbodimentTag` via a mapping in [`gr00t/eval/sim/env_utils.py`](gr00t/eval/sim/env_utils.py).
+
+> **Important:** The env_name prefix and the `EmbodimentTag` value are often different. For example, `libero_sim` maps to `EmbodimentTag.LIBERO_PANDA` (`"libero_panda"`). Do not assume they match.
+
+To add a new benchmark:
+
+1. Add an entry to `ENV_PREFIX_TO_EMBODIMENT_TAG` in `gr00t/eval/sim/env_utils.py`:
+   ```python
+   ENV_PREFIX_TO_EMBODIMENT_TAG = {
+       ...
+       "my_new_benchmark": EmbodimentTag.MY_ROBOT,
+   }
+   ```
+2. If the benchmark has multiple env_name prefixes (e.g., `my_benchmark_v1`, `my_benchmark_v2`), all related prefixes **must** map to the same `EmbodimentTag`.
+3. Add corresponding test cases in `tests/gr00t/eval/sim/test_env_utils.py` and update the `test_all_known_prefixes_present` test.
 
 **Zero-shot Evaluation** (evaluate without finetuning):
 - **RoboCasa**: [Instructions](examples/robocasa/README.md)

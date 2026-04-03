@@ -145,7 +145,9 @@ class ActionChunk(Generic[PoseType]):
         raise NotImplementedError("Subclasses must implement to_absolute_chunking")
 
     def interpolate(
-        self, num_points: Optional[int] = None, times: Optional[NDArray[np.float64]] = None
+        self,
+        num_points: Optional[int] = None,
+        times: Optional[NDArray[np.float64]] = None,
     ) -> "ActionChunk":
         """
         Interpolate the action chunking to generate intermediate poses.
@@ -248,7 +250,9 @@ class JointActionChunk(ActionChunk[JointPose]):
         super().__init__(poses, times)
 
     def interpolate(
-        self, num_points: Optional[int] = None, times: Optional[NDArray[np.float64]] = None
+        self,
+        num_points: Optional[int] = None,
+        times: Optional[NDArray[np.float64]] = None,
     ) -> "JointActionChunk":
         """
         Interpolate the joint action chunking to generate intermediate configurations.
@@ -455,8 +459,27 @@ class EndEffectorActionChunk(ActionChunk[EndEffectorPose]):
 
         super().__init__(poses, times)
 
+    @classmethod
+    def from_array(cls, data: np.ndarray, action_format: ActionFormat) -> "EndEffectorActionChunk":
+        """
+        Create an EndEffectorActionChunk from a 2-D array using the specified action format.
+
+        This is the inverse of ``.to(action_format)``.
+
+        Args:
+            data: Array of shape (N, D) where D depends on the action_format.
+            action_format: The format that describes the layout of each row.
+
+        Returns:
+            EndEffectorActionChunk with N poses.
+        """
+        poses = [EndEffectorPose.from_action_format(row, action_format) for row in data]
+        return cls(poses)
+
     def interpolate(
-        self, num_points: Optional[int] = None, times: Optional[NDArray[np.float64]] = None
+        self,
+        num_points: Optional[int] = None,
+        times: Optional[NDArray[np.float64]] = None,
     ) -> "EndEffectorActionChunk":
         """
         Interpolate the action chunking to generate intermediate poses.

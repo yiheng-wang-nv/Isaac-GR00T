@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import subprocess
 from typing import List, Optional, Tuple
@@ -9,20 +10,126 @@ import numpy as np
 import torchvision
 
 
-# Import decord with graceful fallback
-try:
-    import decord
+# Neither decord nor torchcodec is imported at module level:
+# - decord bundles its own FFmpeg shared libraries which conflict with torchcodec's,
+#   causing torchcodec to silently fail (see GitHub issue #423).
+# - Merely importing decord crashes certain simulators (e.g. BEHAVIOR Isaac Sim).
+# - Lazy-importing both avoids loading unnecessary packages when only one backend is used.
+# Both are instead lazily imported only when explicitly requested via video_backend=<name>.
 
-    DECORD_AVAILABLE = True
-except ImportError:
-    DECORD_AVAILABLE = False
+logger = logging.getLogger(__name__)
 
-try:
-    import torchcodec
 
-    TORCHCODEC_AVAILABLE = True
-except (ImportError, RuntimeError):
-    TORCHCODEC_AVAILABLE = False
+def _lazy_import_torchcodec():
+    """Lazily import torchcodec, raising ImportError if unavailable."""
+    try:
+        import torchcodec
+
+        return torchcodec
+    except (ImportError, RuntimeError):
+        raise ImportError("torchcodec is not available.")
+
+
+def _lazy_import_decord():
+    """Lazily import decord, raising ImportError if unavailable."""
+    try:
+        import decord
+
+        return decord
+    except ImportError:
+        raise ImportError("decord is not available. Install it with: pip install decord")
+
+
+# Known-bad backend+codec combinations that cause silent failures (issue #342).
+# torchvision_av with h265/hevc reads only the first frame without error,
+# leading to policies that train but never learn from visual input.
+_INCOMPATIBLE_BACKEND_CODECS: dict[str, set[str]] = {
+    "torchvision_av": {"hevc", "h265"},
+}
+
+# Preferred fallback order when the requested backend is unavailable or incompatible.
+_BACKEND_FALLBACK_ORDER = ["torchcodec", "decord", "pyav", "ffmpeg"]
+
+
+def _is_backend_available(backend: str) -> bool:
+    """Check if a video backend is available without importing at module level."""
+    if backend == "torchcodec":
+        try:
+            _lazy_import_torchcodec()
+            return True
+        except ImportError:
+            return False
+    elif backend == "decord":
+        try:
+            _lazy_import_decord()
+            return True
+        except ImportError:
+            return False
+    elif backend in ("ffmpeg", "opencv", "pyav", "torchvision_av"):
+        return True
+    return False
+
+
+def resolve_backend(video_path: str, requested_backend: str) -> str:
+    """Resolve the video backend, auto-falling back if incompatible or unavailable.
+
+    Checks codec compatibility and backend availability. If the requested backend
+    is incompatible with the video codec or unavailable, falls back to the next
+    available backend and logs a warning (see issue #342).
+
+    Returns the backend name to actually use.
+    """
+    # Check availability first
+    if not _is_backend_available(requested_backend):
+        for fallback in _BACKEND_FALLBACK_ORDER:
+            if fallback != requested_backend and _is_backend_available(fallback):
+                logger.warning(
+                    "Video backend '%s' is not available, falling back to '%s'. "
+                    "Install the missing package or set video_backend explicitly.",
+                    requested_backend,
+                    fallback,
+                )
+                requested_backend = fallback
+                break
+        else:
+            raise ImportError(
+                f"Video backend '{requested_backend}' is not available and no fallback "
+                f"backend could be found. Install torchcodec or decord."
+            )
+
+    # Check codec compatibility for known-bad combinations
+    bad_codecs = _INCOMPATIBLE_BACKEND_CODECS.get(requested_backend)
+    if bad_codecs is not None:
+        try:
+            codec = _get_video_info_ffmpeg(video_path).get("codec")
+        except ValueError:
+            codec = None
+        if codec and codec in bad_codecs:
+            for fallback in _BACKEND_FALLBACK_ORDER:
+                if fallback != requested_backend and _is_backend_available(fallback):
+                    fallback_bad = _INCOMPATIBLE_BACKEND_CODECS.get(fallback, set())
+                    if codec not in fallback_bad:
+                        logger.warning(
+                            "Video backend '%s' is incompatible with codec '%s' "
+                            "(may silently read only the first frame). "
+                            "Auto-switching to '%s'. Set video_backend='%s' explicitly "
+                            "to suppress this warning.",
+                            requested_backend,
+                            codec,
+                            fallback,
+                            fallback,
+                        )
+                        return fallback
+            # No compatible fallback found — warn but proceed (user's choice)
+            logger.warning(
+                "Video backend '%s' is known to be incompatible with codec '%s', "
+                "but no compatible fallback backend is available. "
+                "Video loading may silently fail (only first frame read).",
+                requested_backend,
+                codec,
+            )
+
+    return requested_backend
 
 
 def _get_video_info_ffmpeg(video_path: str) -> dict:
@@ -34,7 +141,7 @@ def _get_video_info_ffmpeg(video_path: str) -> dict:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=nb_frames,duration,r_frame_rate",
+        "stream=codec_name,nb_frames,duration,r_frame_rate",
         "-of",
         "json",
         video_path,
@@ -60,10 +167,13 @@ def _get_video_info_ffmpeg(video_path: str) -> dict:
         if nb_frames == 0 and duration > 0:
             nb_frames = int(duration * fps)
 
+        codec = stream.get("codec_name") or None
+
         return {
             "nb_frames": nb_frames,
             "fps": fps,
             "duration": duration,
+            "codec": codec,
         }
     except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
         raise ValueError(f"Failed to get video info for {video_path}: {e}")
@@ -262,19 +372,18 @@ def get_frames_by_indices(
     video_backend: str = "ffmpeg",
     video_backend_kwargs: dict = {},
 ) -> np.ndarray:
-    if video_backend == "decord":
-        if not DECORD_AVAILABLE:
-            raise ImportError("decord is not available. Install it with: pip install decord")
-        vr = decord.VideoReader(video_path, **video_backend_kwargs)
-        frames = vr.get_batch(indices)
-        return frames.asnumpy()
-    elif video_backend == "torchcodec":
-        if not TORCHCODEC_AVAILABLE:
-            raise ImportError("torchcodec is not available.")
+    video_backend = resolve_backend(video_path, video_backend)
+    if video_backend == "torchcodec":
+        torchcodec = _lazy_import_torchcodec()
         decoder = torchcodec.decoders.VideoDecoder(
             video_path, device="cpu", dimension_order="NHWC", num_ffmpeg_threads=0
         )
         return decoder.get_frames_at(indices=indices).data.numpy()
+    elif video_backend == "decord":
+        decord = _lazy_import_decord()
+        vr = decord.VideoReader(video_path, **video_backend_kwargs)
+        frames = vr.get_batch(indices)
+        return frames.asnumpy()
     elif video_backend == "ffmpeg":
         return _extract_frames_ffmpeg(video_path, list(indices))
     elif video_backend == "opencv":
@@ -309,21 +418,9 @@ def get_frames_by_timestamps(
     Returns:
         np.ndarray: Frames at the specified timestamps.
     """
-    if video_backend == "decord":
-        if not DECORD_AVAILABLE:
-            raise ImportError("decord is not available. Install it with: pip install decord")
-        vr = decord.VideoReader(video_path, **video_backend_kwargs)
-        num_frames = len(vr)
-        # Retrieve the timestamps for each frame in the video
-        frame_ts: np.ndarray = vr.get_frame_timestamp(range(num_frames))
-        # Map each requested timestamp to the closest frame index
-        # Only take the first element of the frame_ts array which corresponds to start_seconds
-        indices = np.abs(frame_ts[:, :1] - timestamps).argmin(axis=0)
-        frames = vr.get_batch(indices)
-        return frames.asnumpy()
-    elif video_backend == "torchcodec":
-        if not TORCHCODEC_AVAILABLE:
-            raise ImportError("torchcodec is not available.")
+    video_backend = resolve_backend(video_path, video_backend)
+    if video_backend == "torchcodec":
+        torchcodec = _lazy_import_torchcodec()
         decoder = torchcodec.decoders.VideoDecoder(
             video_path, device="cpu", dimension_order="NHWC", num_ffmpeg_threads=0
         )
@@ -351,6 +448,17 @@ def get_frames_by_timestamps(
         timestamps = closest_timestamps
 
         return decoder.get_frames_played_at(seconds=timestamps).data.numpy()
+    elif video_backend == "decord":
+        decord = _lazy_import_decord()
+        vr = decord.VideoReader(video_path, **video_backend_kwargs)
+        num_frames = len(vr)
+        # Retrieve the timestamps for each frame in the video
+        frame_ts: np.ndarray = vr.get_frame_timestamp(range(num_frames))
+        # Map each requested timestamp to the closest frame index
+        # Only take the first element of the frame_ts array which corresponds to start_seconds
+        indices = np.abs(frame_ts[:, :1] - timestamps).argmin(axis=0)
+        frames = vr.get_batch(indices)
+        return frames.asnumpy()
     elif video_backend == "ffmpeg":
         return _extract_frames_at_timestamps_ffmpeg(video_path, list(timestamps))
     elif video_backend == "opencv":
@@ -385,30 +493,32 @@ def get_frames_by_timestamps(
         # TODO(rcadene): also load audio stream at the same time
         reader = torchvision.io.VideoReader(video_path, "video")
 
-        # set the first and last requested timestamps
-        # Note: previous timestamps are usually loaded, since we need to access the previous key frame
-        first_ts = timestamps[0]
-        last_ts = timestamps[-1]
+        try:
+            # set the first and last requested timestamps
+            # Note: previous timestamps are usually loaded, since we need to access the previous key frame
+            first_ts = timestamps[0]
+            last_ts = timestamps[-1]
 
-        # access closest key frame of the first requested frame
-        # Note: closest key frame timestamp is usally smaller than `first_ts` (e.g. key frame can be the first frame of the video)
-        # for details on what `seek` is doing see: https://pyav.basswood-io.com/docs/stable/api/container.html?highlight=inputcontainer#av.container.InputContainer.seek
-        reader.seek(first_ts, keyframes_only=True)
+            # access closest key frame of the first requested frame
+            # Note: closest key frame timestamp is usally smaller than `first_ts` (e.g. key frame can be the first frame of the video)
+            # for details on what `seek` is doing see: https://pyav.basswood-io.com/docs/stable/api/container.html?highlight=inputcontainer#av.container.InputContainer.seek
+            reader.seek(first_ts, keyframes_only=True)
 
-        # load all frames until last requested frame
-        loaded_frames = []
-        loaded_ts = []
-        for frame in reader:
-            current_ts = frame["pts"]
-            loaded_frames.append(frame["data"])
-            loaded_ts.append(current_ts)
-            if current_ts >= last_ts:
-                break
+            # load all frames until last requested frame
+            loaded_frames = []
+            loaded_ts = []
+            for frame in reader:
+                current_ts = frame["pts"]
+                loaded_frames.append(frame["data"])
+                loaded_ts.append(current_ts)
+                if current_ts >= last_ts:
+                    break
 
-        reader.container.close()
-        reader = None
-        frames = np.array(loaded_frames)
-        return frames.transpose(0, 2, 3, 1)
+            frames = np.array(loaded_frames)
+            return frames.transpose(0, 2, 3, 1)
+        finally:
+            reader.container.close()
+            reader = None
 
     else:
         raise NotImplementedError
@@ -424,32 +534,30 @@ def get_all_frames(
     Returns:
         tuple[np.ndarray, np.ndarray]: Frames and timestamps.
     """
-    if video_backend == "decord":
-        if not DECORD_AVAILABLE:
-            raise ImportError("decord is not available. Install it with: pip install decord")
-        vr = decord.VideoReader(video_path, **video_backend_kwargs)
-        frames = vr.get_batch(range(len(vr))).asnumpy()
-        return frames, vr.get_frame_timestamp(range(len(vr)))[:, 0]
-    elif video_backend == "torchcodec":
-        if not TORCHCODEC_AVAILABLE:
-            raise ImportError("torchcodec is not available.")
+    video_backend = resolve_backend(video_path, video_backend)
+    if video_backend == "torchcodec":
+        torchcodec = _lazy_import_torchcodec()
         decoder = torchcodec.decoders.VideoDecoder(
             video_path, device="cpu", dimension_order="NHWC", num_ffmpeg_threads=0
         )
         frames = decoder.get_frames_at(indices=range(len(decoder)))
         return frames.data.numpy(), frames.pts_seconds.numpy()
+    elif video_backend == "decord":
+        decord = _lazy_import_decord()
+        vr = decord.VideoReader(video_path, **video_backend_kwargs)
+        frames = vr.get_batch(range(len(vr))).asnumpy()
+        return frames, vr.get_frame_timestamp(range(len(vr)))[:, 0]
     elif video_backend == "ffmpeg":
         return _extract_all_frames_ffmpeg(video_path)
     elif video_backend == "pyav":
-        container = av.open(video_path)
-        stream = container.streams.video[0]
-        assert stream.time_base is not None
-        frames = []
-        timestamps = []
-        for frame in container.decode(video=0):
-            frames.append(frame.to_ndarray(format="rgb24"))
-            timestamps.append(frame.pts * stream.time_base)
-        container.close()
+        with av.open(video_path) as container:
+            stream = container.streams.video[0]
+            assert stream.time_base is not None
+            frames = []
+            timestamps = []
+            for frame in container.decode(video=0):
+                frames.append(frame.to_ndarray(format="rgb24"))
+                timestamps.append(frame.pts * stream.time_base)
         return np.stack(frames), np.array(timestamps)
 
     else:

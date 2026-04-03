@@ -39,7 +39,7 @@ LEROBOT_MODALITY_FILENAME = "modality.json"
 LEROBOT_STATS_FILE_NAME = "stats.json"
 LEROBOT_RELATIVE_STATS_FILE_NAME = "relative_stats.json"
 
-ALLOWED_MODALITIES = ["video", "state", "action", "language"]
+ALLOWED_MODALITIES = ["video", "state", "action", "language", "mask"]
 DEFAULT_COLUMN_NAMES = {
     "state": "observation.state",
     "action": "action",
@@ -178,6 +178,7 @@ class LeRobotEpisodeLoader:
         self.feature_config = self.info_meta.get("features", {})
         self.data_path_pattern = self.info_meta["data_path"]
         self.video_path_pattern = self.info_meta.get("video_path")
+        self.mask_path_pattern = self.info_meta.get("mask_path")
         self.chunk_size = self.info_meta["chunks_size"]
         self.fps = self.info_meta.get("fps", 30)
 
@@ -231,6 +232,24 @@ class LeRobotEpisodeLoader:
                 )
                 assert modality_configs[modality].delta_indices == [0], (
                     "Only single timestep is supported for language modality"
+                )
+
+        # Validate video modality_keys against modality.json.
+        # Each key in modality_configs["video"].modality_keys must exist in
+        # modality.json["video"], otherwise _load_video_data will fail with
+        # a confusing KeyError when trying to resolve the original video key.
+        if "video" in modality_configs and "video" in self.modality_meta:
+            config_keys = set(modality_configs["video"].modality_keys)
+            meta_keys = set(self.modality_meta["video"].keys())
+            missing_keys = config_keys - meta_keys
+            if missing_keys:
+                raise ValueError(
+                    f"Video modality_keys {sorted(missing_keys)} in modality_config "
+                    f"not found in modality.json. "
+                    f"modality_config expects: {sorted(config_keys)}, "
+                    f"modality.json defines: {sorted(meta_keys)}. "
+                    f"Please ensure modality.json and your modality_config use the "
+                    f"same video key names."
                 )
 
         return modality_configs
@@ -325,7 +344,9 @@ class LeRobotEpisodeLoader:
             if modality_type not in self.modality_configs:
                 continue
             joint_groups_df = self._extract_joint_groups(
-                original_df, self.modality_configs[modality_type].modality_keys, modality_type
+                original_df,
+                self.modality_configs[modality_type].modality_keys,
+                modality_type,
             )
             for joint_group in joint_groups_df.columns:
                 loaded_df[f"{modality_type}.{joint_group}"] = joint_groups_df[joint_group]
@@ -365,7 +386,9 @@ class LeRobotEpisodeLoader:
 
             # Construct video file path using pattern
             video_filename = self.video_path_pattern.format(
-                episode_chunk=chunk_idx, video_key=original_key, episode_index=episode_index
+                episode_chunk=chunk_idx,
+                video_key=original_key,
+                episode_index=episode_index,
             )
             video_path = self.dataset_path / video_filename
 
@@ -378,6 +401,56 @@ class LeRobotEpisodeLoader:
             )
 
         return video_data
+
+    def _load_mask_file(self, mask_path: Path, indices: np.ndarray) -> np.ndarray:
+        """Load masks from npz/npy file at specified indices."""
+        if not mask_path.exists():
+            raise FileNotFoundError(f"Mask file does not exist: {mask_path}")
+        suffix = mask_path.suffix.lower()
+        if suffix not in {".npz", ".npy"}:
+            raise ValueError(f"Only .npz or .npy mask files are supported: {mask_path}")
+
+        if suffix == ".npy":
+            masks = np.load(mask_path)
+        else:
+            npz_data = np.load(mask_path)
+            if "arr_0" in npz_data:
+                masks = npz_data["arr_0"]
+            elif len(npz_data.files) == 1:
+                masks = npz_data[npz_data.files[0]]
+            else:
+                raise ValueError(f"Mask npz must contain a single array or 'arr_0': {mask_path}")
+
+        if masks.ndim == 2:
+            masks = masks[None, ...]
+
+        return masks[indices]
+
+    def _load_mask_data(self, episode_index: int, indices: np.ndarray) -> dict[str, np.ndarray]:
+        """
+        Load mask data for all configured mask views at specified indices.
+        """
+        mask_data = {}
+
+        if not self.mask_path_pattern or "mask" not in self.modality_configs:
+            return mask_data
+
+        chunk_idx = episode_index // self.chunk_size
+        mask_keys = self.modality_configs["mask"].modality_keys
+
+        for mask_key in mask_keys:
+            mask_meta = self.modality_meta.get("mask", {}).get(mask_key, {})
+            original_key = mask_meta.get("original_key", mask_key)
+            mask_filename = self.mask_path_pattern.format(
+                episode_chunk=chunk_idx,
+                episode_index=episode_index,
+                mask_key=original_key,
+                video_key=original_key,
+            )
+            mask_path = self.dataset_path / mask_filename
+            mask_data[mask_key] = self._load_mask_file(mask_path, indices)
+
+        return mask_data
 
     def get_dataset_statistics(self) -> dict[str, Any]:
         """
@@ -428,7 +501,11 @@ class LeRobotEpisodeLoader:
             new_languages = [[] for _ in range(nframes)]
             sub_tasks = episode_meta["sub_tasks"]
             for sub_task in sub_tasks:
-                start_idx, end_idx, sub_text = sub_task["start"], sub_task["end"], sub_task["text"]
+                start_idx, end_idx, sub_text = (
+                    sub_task["start"],
+                    sub_task["end"],
+                    sub_task["text"],
+                )
                 horizon = action_horizon // 2
                 for i in range(start_idx - horizon, end_idx):
                     if i < 0:
@@ -487,6 +564,14 @@ class LeRobotEpisodeLoader:
                 f"Video data for {key} has length {len(video_data[key])} but dataframe has length {len(df)}"
             )
             df[f"video.{key}"] = [frame for frame in video_data[key]]
+
+        # Load synchronized mask data
+        mask_data = self._load_mask_data(episode_id, np.arange(actual_length))
+        for key in mask_data.keys():
+            assert len(mask_data[key]) == len(df), (
+                f"Mask data for {key} has length {len(mask_data[key])} but dataframe has length {len(df)}"
+            )
+            df[f"mask.{key}"] = [mask for mask in mask_data[key]]
 
         return df
 
