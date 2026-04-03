@@ -104,6 +104,7 @@ GR00T uses [uv](https://github.com/astral-sh/uv) for fast, reproducible dependen
 ```bash
 bash scripts/deployment/dgpu/install_deps.sh
 source .venv/bin/activate
+sudo apt-get install -y python3.10-dev
 ```
 
 Or manually:
