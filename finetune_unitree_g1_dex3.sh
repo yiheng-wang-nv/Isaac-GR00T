@@ -5,10 +5,10 @@ set -x -e
 # Dataset: install_trocar_from_tray_realsense_lerobot
 # Multiple training runs with different max_steps for comparison
 
-export NUM_GPUS=2
+export NUM_GPUS=8
 
 # Path configuration
-DATASET_PATH="/localhome/local-vennw/code/datasets/install_trocar_from_tray_realsense_lerobot"
+DATASET_PATH="/localhome/local-vennw/code/dataset/install_trocar_0403_vla_clean"
 MODALITY_CONFIG_PATH="unitree_g1_dex3_config.py"
 BASE_OUTPUT_DIR="outputs/install_trocar_model"
 
@@ -16,7 +16,7 @@ BASE_OUTPUT_DIR="outputs/install_trocar_model"
 cd /localhome/local-vennw/code/Isaac-GR00T
 
 # Define different max_steps for comparison experiments
-MAX_STEPS_LIST=(10000 20000 50000)
+MAX_STEPS_LIST=(60000)
 
 for MAX_STEPS in "${MAX_STEPS_LIST[@]}"; do
     echo "=========================================="
@@ -28,7 +28,7 @@ for MAX_STEPS in "${MAX_STEPS_LIST[@]}"; do
     # Calculate save_steps (save 5 checkpoints evenly)
     SAVE_STEPS=$((MAX_STEPS / 5))
     
-    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
+    uv run torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
         gr00t/experiment/launch_finetune.py \
         --base_model_path nvidia/GR00T-N1.6-3B \
         --dataset_path ${DATASET_PATH} \
@@ -42,9 +42,9 @@ for MAX_STEPS in "${MAX_STEPS_LIST[@]}"; do
         --warmup_ratio 0.05 \
         --weight_decay 1e-5 \
         --learning_rate 1e-4 \
-        --global_batch_size 64 \
+        --global_batch_size 512 \
         --color_jitter_params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
-        --dataloader_num_workers 4
+        --dataloader_num_workers 4 --use_wandb
     
     echo "Finished training with max_steps=${MAX_STEPS}"
     echo ""
