@@ -41,7 +41,7 @@ unitree_g1_dex3_config = {
     
     # Action modality: 16-step prediction horizon
     "action": ModalityConfig(
-        delta_indices=list(range(0, 16)),  # Predict 16 steps into the future
+        delta_indices=list(range(0, 32)),  # Predict 16 steps into the future
         modality_keys=[
             "left_arm",
             "right_arm",
@@ -49,27 +49,27 @@ unitree_g1_dex3_config = {
             "right_hand",
         ],
         action_configs=[
-            # left_arm: use absolute actions (matching old config with min_max normalization)
+            # left_arm: use relative actions (matching old config with min_max normalization)
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,  # Joint space control
                 format=ActionFormat.DEFAULT,
             ),
-            # right_arm: use absolute actions
+            # right_arm: use relative actions
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
-            # left_hand: use absolute actions
+            # left_hand: use relative actions
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
-            # right_hand: use absolute actions
+            # right_hand: use relative actions
             ActionConfig(
-                rep=ActionRepresentation.ABSOLUTE,
+                rep=ActionRepresentation.RELATIVE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
             ),
