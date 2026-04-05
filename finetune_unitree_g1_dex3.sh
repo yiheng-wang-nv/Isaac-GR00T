@@ -42,7 +42,7 @@ for MAX_STEPS in "${MAX_STEPS_LIST[@]}"; do
         --warmup_ratio 0.05 \
         --weight_decay 1e-5 \
         --learning_rate 1e-4 \
-        --global_batch_size 512 \
+        --global_batch_size 1024 \
         --color_jitter_params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
         --dataloader_num_workers 4 --use_wandb
     
