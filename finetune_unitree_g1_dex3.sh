@@ -5,10 +5,11 @@ set -x -e
 # Dataset: install_trocar_from_tray_realsense_lerobot
 # Multiple training runs with different max_steps for comparison
 
-export NUM_GPUS=8
+export CUDA_VISIBLE_DEVICES=7
+export NUM_GPUS=1
 
 # Path configuration
-DATASET_PATH="/localhome/local-vennw/code/dataset/install_trocar_0403_vla_clean"
+DATASET_PATH="/localhome/local-vennw/code/orca-template2-dev/install_trocar_0407_raw_lerobot_clean"
 MODALITY_CONFIG_PATH="unitree_g1_dex3_config.py"
 BASE_OUTPUT_DIR="outputs/install_trocar_model"
 
@@ -16,7 +17,7 @@ BASE_OUTPUT_DIR="outputs/install_trocar_model"
 cd /localhome/local-vennw/code/Isaac-GR00T
 
 # Define different max_steps for comparison experiments
-MAX_STEPS_LIST=(60000)
+MAX_STEPS_LIST=(20000)
 
 for MAX_STEPS in "${MAX_STEPS_LIST[@]}"; do
     echo "=========================================="
@@ -42,7 +43,7 @@ for MAX_STEPS in "${MAX_STEPS_LIST[@]}"; do
         --warmup_ratio 0.05 \
         --weight_decay 1e-5 \
         --learning_rate 1e-4 \
-        --global_batch_size 1024 \
+        --global_batch_size 48 \
         --color_jitter_params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
         --dataloader_num_workers 4 --use_wandb
     
