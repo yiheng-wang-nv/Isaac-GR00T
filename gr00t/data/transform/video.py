@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import glob as glob_mod
+import random as _random
+from pathlib import Path
 from typing import Any, Callable, ClassVar, Literal
 
 import albumentations as A
@@ -582,3 +585,121 @@ class VideoToNumpy(VideoTransform):
             numpy array of shape [T, H, W, C] in uint8 format
         """
         return (frames.permute(0, 2, 3, 1) * 255).to(torch.uint8).cpu().numpy()
+
+
+class ChangeBackgroundTransform(ModalityTransform):
+    """Replace background pixels in video frames using segmentation masks and template images.
+
+    Reads mask data from the data dict at ``mask.{subkey}`` for each ``video.{subkey}``
+    in ``apply_to``.  Masks are injected by ``LeRobotSingleDataset`` when a ``masks/``
+    directory exists alongside the dataset.
+
+    Operates on ``[T, H, W, C]`` uint8 numpy arrays **before** ``VideoToTensor``.
+    Place this transform first in the pipeline::
+
+        ChangeBackgroundTransform → VideoToTensor → VideoCrop → VideoResize → …
+
+    Args:
+        template_folder: Path to a directory of background images (``.jpg`` / ``.png``).
+            Use ``extract_template_frames.py`` (from upstream) to pre-extract frames
+            from a template video.
+        target_mask_values: Mask pixel values that indicate background (default ``[0]``).
+        p: Probability of applying the transform per sample.
+        feather_radius: Gaussian-blur radius for soft mask edges (0 = hard cut).
+    """
+
+    template_folder: str = Field(..., description="Directory containing background template images")
+    target_mask_values: list[int] = Field(default_factory=lambda: [0])
+    p: float = Field(default=0.5, ge=0.0, le=1.0)
+    feather_radius: int = Field(default=3, ge=0)
+
+    _template_images: list[str] = PrivateAttr(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        folder = Path(self.template_folder)
+        paths = sorted(
+            glob_mod.glob(str(folder / "*.jpg"))
+            + glob_mod.glob(str(folder / "*.jpeg"))
+            + glob_mod.glob(str(folder / "*.png"))
+        )
+        if not paths:
+            raise RuntimeError(f"No template images found in {self.template_folder}")
+        self._template_images = paths
+        print(
+            f"[ChangeBackgroundTransform] {len(paths)} templates from {self.template_folder}"
+        )
+
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        if not self.training:
+            # Clean up mask keys even in eval mode
+            self._cleanup_masks(data)
+            return data
+
+        if _random.random() > self.p:
+            self._cleanup_masks(data)
+            return data
+
+        # Pick one random template for all views & frames (temporal + multi-view consistency)
+        tpl_path = self._template_images[_random.randint(0, len(self._template_images) - 1)]
+        tpl_bgr = cv2.imread(tpl_path)
+        if tpl_bgr is None:
+            self._cleanup_masks(data)
+            return data
+        tpl_rgb = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2RGB)
+
+        for key in self.apply_to:
+            mask_key = key.replace("video.", "mask.")
+            if mask_key not in data:
+                continue
+
+            video = data[key]       # (T, H, W, C) uint8
+            masks = data[mask_key]  # (T, H, W) uint8
+            H, W = video.shape[1], video.shape[2]
+
+            # Resize template to match frame size (center-bottom crop like upstream)
+            tpl_cropped = self._center_bottom_crop(tpl_rgb, H, W)
+
+            for t in range(video.shape[0]):
+                frame = video[t]
+                mask = masks[t]
+
+                bg = np.isin(mask, self.target_mask_values)
+                if not bg.any():
+                    continue
+
+                if self.feather_radius > 0:
+                    fg_uint8 = (~bg).astype(np.uint8) * 255
+                    ksize = self.feather_radius * 2 + 1
+                    alpha = cv2.GaussianBlur(fg_uint8, (ksize, ksize), 0).astype(np.float32) / 255.0
+                    alpha_3 = alpha[:, :, np.newaxis]
+                    blended = (
+                        frame.astype(np.float32) * alpha_3
+                        + tpl_cropped.astype(np.float32) * (1.0 - alpha_3)
+                    )
+                    video[t] = np.clip(blended, 0, 255).astype(np.uint8)
+                else:
+                    video[t][bg] = tpl_cropped[bg]
+
+            data[key] = video
+
+        self._cleanup_masks(data)
+        return data
+
+    def _cleanup_masks(self, data: dict[str, Any]) -> None:
+        """Remove mask keys so downstream transforms don't see them."""
+        for key in self.apply_to:
+            mask_key = key.replace("video.", "mask.")
+            data.pop(mask_key, None)
+
+    @staticmethod
+    def _center_bottom_crop(frame: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        """Crop frame: horizontally centered, vertically bottom-aligned."""
+        h, w = frame.shape[:2]
+        scale = max(target_h / h, target_w / w)
+        if scale > 1.0:
+            new_h, new_w = int(h * scale + 0.5), int(w * scale + 0.5)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            h, w = frame.shape[:2]
+        x0 = (w - target_w) // 2
+        y0 = h - target_h
+        return frame[y0 : y0 + target_h, x0 : x0 + target_w]

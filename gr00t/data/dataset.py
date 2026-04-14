@@ -180,6 +180,8 @@ class LeRobotSingleDataset(Dataset):
         self._tasks = self._get_tasks()
         self.curr_traj_data = None
         self.curr_traj_id = None
+        self._has_masks = (self._dataset_path / "masks").is_dir()
+        self._mask_cache: dict[tuple[int, str], np.ndarray] = {}  # (traj_id, key) -> masks
 
         # Check if the dataset is valid
         self._check_integrity()
@@ -573,6 +575,14 @@ class LeRobotSingleDataset(Dataset):
             # Get the data corresponding to each key in the modality
             for key in self.modality_keys[modality]:
                 data[key] = self.get_data_by_modality(trajectory_id, modality, key, base_index)
+
+        # Load masks for video keys if masks directory exists
+        if self._has_masks:
+            for key in self.modality_keys.get("video", []):
+                mask = self.get_mask(trajectory_id, key, base_index)
+                if mask is not None:
+                    data[key.replace("video.", "mask.")] = mask
+
         return data
 
     def get_trajectory_data(self, trajectory_id: int) -> pd.DataFrame:
@@ -708,6 +718,55 @@ class LeRobotSingleDataset(Dataset):
             video_backend=self.video_backend,
             video_backend_kwargs=self.video_backend_kwargs,
         )
+
+    def get_mask(
+        self,
+        trajectory_id: int,
+        key: str,
+        base_index: int,
+    ) -> np.ndarray | None:
+        """Load mask frames corresponding to a video key.
+
+        Masks are expected at:
+            {dataset_path}/masks/chunk-{chunk}/{original_key}/episode_{id}_masks.npz
+        with a single array 'arr_0' of shape (T_episode, H, W), dtype uint8.
+
+        Returns:
+            np.ndarray of shape (T, H, W) uint8, or None if no mask file exists.
+        """
+        assert key.startswith("video."), f"Key must start with 'video.', got {key}"
+        sub_key = key.replace("video.", "")
+
+        original_key = self.lerobot_modality_meta.video[sub_key].original_key
+        if original_key is None:
+            original_key = sub_key
+
+        chunk_index = self.get_episode_chunk(trajectory_id)
+        mask_path = (
+            self.dataset_path
+            / "masks"
+            / f"chunk-{chunk_index:03d}"
+            / original_key
+            / f"episode_{trajectory_id:06d}_masks.npz"
+        )
+        if not mask_path.exists():
+            return None
+
+        # Cache the full episode mask array to avoid repeated disk reads
+        cache_key = (trajectory_id, sub_key)
+        if cache_key not in self._mask_cache:
+            self._mask_cache.clear()  # keep only one episode in memory
+            self._mask_cache[cache_key] = np.load(mask_path)["arr_0"]
+
+        all_masks = self._mask_cache[cache_key]  # (T_episode, H, W)
+
+        # Use the same step_indices logic as get_video
+        step_indices = self.delta_indices[key] + base_index
+        trajectory_index = self.get_trajectory_index(trajectory_id)
+        step_indices = np.maximum(step_indices, 0)
+        step_indices = np.minimum(step_indices, self.trajectory_lengths[trajectory_index] - 1)
+
+        return all_masks[step_indices]  # (T, H, W)
 
     def get_state_or_action(
         self,
