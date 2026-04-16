@@ -29,6 +29,7 @@ from .state_action import (
 from .video import (
     ChangeBackgroundTransform,
     VideoColorJitter,
+    VideoCosmosAugmentTransform,
     VideoCrop,
     VideoGrayscale,
     VideoHorizontalFlip,

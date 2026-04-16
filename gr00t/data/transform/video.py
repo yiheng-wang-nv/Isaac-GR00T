@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import glob as glob_mod
+import random
 import random as _random
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Literal
@@ -703,3 +704,152 @@ class ChangeBackgroundTransform(ModalityTransform):
         x0 = (w - target_w) // 2
         y0 = h - target_h
         return frame[y0 : y0 + target_h, x0 : x0 + target_w]
+
+
+class VideoCosmosAugmentTransform(VideoTransform):
+    """Augments video frames via a running Cosmos-Transfer2.5 ZMQ service.
+
+    Results are cached to ``cache_dir`` keyed by ``{content_hash}_{seed}.pt``
+    so subsequent training epochs load instantly from disk.  Only applied
+    during training; eval mode is a no-op.
+
+    Placement: insert after ``VideoToTensor``, before ``VideoCrop``.  Cosmos
+    runs at the original frame resolution; the random crop and resize that
+    follow still apply, preserving per-step stochasticity.
+
+    Start one service process per GPU before training::
+
+        cd third_party/cosmos-transfer2.5
+        CUDA_VISIBLE_DEVICES=0 .venv/bin/python ../../scripts/cosmos_service.py --port 5557
+        CUDA_VISIBLE_DEVICES=1 .venv/bin/python ../../scripts/cosmos_service.py --port 5558
+
+    Each DataLoader worker is assigned to a service round-robin via
+    ``worker_id % len(ports)``, so N GPUs serve N workers in parallel with no
+    broker.
+
+    Args:
+        seed: If ``None`` (default), a fresh random uint32 seed is drawn each
+            call, producing different augmentations across epochs (all results
+            are still cached by ``{hash}_{seed}.pt``).  Pass a fixed integer
+            for fully reproducible augmentation — the cache entry is reused
+            every epoch.
+        grid_mode: If ``True``, all video keys in ``apply_to`` are tiled into
+            a single 2x2 grid (``[T, C, 2H, 2W]``) before the Cosmos call,
+            then split back.  This yields spatially coherent augmentation
+            across views (consistent lighting/style) and halves the number of
+            Cosmos calls.  All keys must have identical ``[T, C, H, W]``
+            shapes.  Falls back to per-key mode when fewer than 2 keys are
+            present in the data.
+    """
+
+    cache_dir: str
+    host: str = "localhost"
+    ports: list[int] = Field(default_factory=lambda: [5557])
+    probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    seed: int | None = None
+    grid_mode: bool = False
+
+    _socket: Any = PrivateAttr(default=None)
+
+    def set_metadata(self, dataset_metadata: DatasetMetadata):
+        from gr00t.data.transform.base import ModalityTransform
+
+        ModalityTransform.set_metadata(self, dataset_metadata)
+        resolutions: dict[str, tuple[int, int]] = {}
+        for key in self.apply_to:
+            sub_key = key.split(".")[1]
+            resolutions[key] = dataset_metadata.modalities.video[sub_key].resolution
+        self.original_resolutions = resolutions
+
+    def get_transform(self, mode: Literal["train", "eval"] = "train") -> Callable | None:
+        return None
+
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        if not self.training:
+            return data
+
+        if random.random() < self.probability:
+            seed = self._next_seed()
+            if self.grid_mode:
+                data = self._apply_grid(data, seed)
+            else:
+                for key in self.apply_to:
+                    if key in data:
+                        data[key] = self._augment_or_load(data[key], seed)
+        return data
+
+    def _next_seed(self) -> int:
+        return self.seed if self.seed is not None else random.randint(0, 2**32 - 1)
+
+    def _apply_grid(self, data: dict[str, Any], seed: int) -> dict[str, Any]:
+        keys_present = [k for k in self.apply_to if k in data]
+        if len(keys_present) < 2:
+            for key in keys_present:
+                data[key] = self._augment_or_load(data[key], seed)
+            return data
+
+        frames_list = [data[k] for k in keys_present]
+        T, C, H, W = frames_list[0].shape
+        for f in frames_list[1:]:
+            if f.shape != (T, C, H, W):
+                raise ValueError(
+                    f"grid_mode requires all video keys to have identical shape "
+                    f"{(T, C, H, W)}, but got {tuple(f.shape)}"
+                )
+
+        grid = self._build_grid(frames_list)
+        augmented_grid = self._augment_or_load(grid, seed)
+
+        for i, key in enumerate(keys_present):
+            row, col = divmod(i, 2)
+            data[key] = augmented_grid[:, :, row * H : (row + 1) * H, col * W : (col + 1) * W]
+        return data
+
+    @staticmethod
+    def _build_grid(frames_list: list) -> "torch.Tensor":
+        T, C, H, W = frames_list[0].shape
+        zero = torch.zeros(T, C, H, W, dtype=frames_list[0].dtype)
+        slots = (frames_list + [zero, zero, zero, zero])[:4]
+        top = torch.cat([slots[0], slots[1]], dim=3)
+        bottom = torch.cat([slots[2], slots[3]], dim=3)
+        return torch.cat([top, bottom], dim=2)
+
+    def _connect(self) -> None:
+        import zmq
+        from torch.utils.data import get_worker_info
+
+        worker_info = get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
+        port = self.ports[worker_id % len(self.ports)]
+        ctx = zmq.Context()
+        self._socket = ctx.socket(zmq.REQ)
+        self._socket.connect(f"tcp://{self.host}:{port}")
+
+    def _hash_tensor(self, t: torch.Tensor) -> str:
+        import hashlib
+
+        return hashlib.sha256(t.numpy().tobytes()).hexdigest()[:16]
+
+    def _augment_or_load(self, frames: torch.Tensor, seed: int) -> torch.Tensor:
+        import struct
+
+        cache_path = Path(self.cache_dir) / f"{self._hash_tensor(frames)}_{seed}.pt"
+        if cache_path.exists():
+            return torch.load(cache_path, weights_only=True)
+
+        if self._socket is None:
+            self._connect()
+        T, C, H, W = frames.shape
+        msg = struct.pack("5I", T, C, H, W, seed) + frames.numpy().tobytes()
+        self._socket.send(msg)
+        reply = self._socket.recv()
+        rT, rC, rH, rW = struct.unpack("4I", reply[:16])
+        augmented = torch.from_numpy(
+            np.frombuffer(reply[16:], dtype=np.float32).copy()
+        ).reshape(rT, rC, rH, rW)
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(".tmp")
+        torch.save(augmented, tmp_path)
+        tmp_path.rename(cache_path)
+        return augmented
