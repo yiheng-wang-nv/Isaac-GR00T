@@ -153,6 +153,24 @@ class FlowmatchingActionHeadConfig(PretrainedConfig):
         default=32, metadata={"help": "Number of target vision tokens."}
     )
 
+    # --- Auxiliary per-frame stage classifier (optional) ---
+    use_stage_classifier: bool = field(
+        default=False,
+        metadata={"help": "Enable a per-frame stage classification head."},
+    )
+    num_stage_classes: int = field(
+        default=5,
+        metadata={"help": "Number of stage classes for the auxiliary classifier."},
+    )
+    stage_classifier_weight: float = field(
+        default=0.1,
+        metadata={"help": "Weight on the stage classifier loss."},
+    )
+    stage_classifier_hidden: int = field(
+        default=512,
+        metadata={"help": "Hidden size of the stage classifier MLP."},
+    )
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         for key, value in kwargs.items():
@@ -208,6 +226,16 @@ class FlowmatchingActionHead(nn.Module):
         if config.add_pos_embed:
             self.position_embedding = nn.Embedding(config.max_seq_len, self.input_embedding_dim)
             nn.init.normal_(self.position_embedding.weight, mean=0.0, std=0.02)
+
+        self.use_stage_classifier = getattr(config, "use_stage_classifier", False)
+        if self.use_stage_classifier:
+            hidden = getattr(config, "stage_classifier_hidden", 512)
+            num_classes = getattr(config, "num_stage_classes", 5)
+            self.stage_head = nn.Sequential(
+                nn.Linear(config.backbone_embedding_dim, hidden),
+                nn.GELU(),
+                nn.Linear(hidden, num_classes),
+            )
 
         self.beta_dist = Beta(config.noise_beta_alpha, config.noise_beta_beta)
         self.num_timestep_buckets = config.num_timestep_buckets
@@ -339,12 +367,39 @@ class FlowmatchingActionHead(nn.Module):
 
         # Slice out only the action portion of pred and target.
         action_mask = action_input.action_mask
-        loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
-        loss = loss.sum() / action_mask.sum()
+        flow_matching_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
+        flow_matching_loss = flow_matching_loss.sum() / action_mask.sum()
+
         output_dict = {
-            "loss": loss,
+            "loss": flow_matching_loss,
+            "flow_matching_loss": flow_matching_loss.detach(),
         }
+
+        # Optional per-frame stage classifier.
+        if self.use_stage_classifier and "stage" in action_input:
+            stage_logits = self._compute_stage_logits(vl_embs, vl_attn_mask)
+            stage_target = action_input.stage.long().view(-1)
+            stage_loss = F.cross_entropy(stage_logits, stage_target)
+            with torch.no_grad():
+                stage_acc = (stage_logits.argmax(dim=-1) == stage_target).float().mean()
+            output_dict["loss"] = (
+                flow_matching_loss + self.config.stage_classifier_weight * stage_loss
+            )
+            output_dict["stage_loss"] = stage_loss.detach()
+            output_dict["stage_acc"] = stage_acc
+
         return BatchFeature(data=output_dict)
+
+    def _compute_stage_logits(
+        self, vl_embs: torch.Tensor, vl_attn_mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Mean-pool VL tokens (honoring the attention mask) and classify."""
+        if vl_attn_mask is None:
+            pooled = vl_embs.mean(dim=1)
+        else:
+            mask = vl_attn_mask.to(dtype=vl_embs.dtype).unsqueeze(-1)
+            pooled = (vl_embs * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+        return self.stage_head(pooled)
 
     @torch.no_grad()
     def get_action(self, backbone_output: BatchFeature, action_input: BatchFeature) -> BatchFeature:
@@ -402,7 +457,11 @@ class FlowmatchingActionHead(nn.Module):
 
             # Update actions using euler integration.
             actions = actions + dt * pred_velocity
-        return BatchFeature(data={"action_pred": actions})
+        output = {"action_pred": actions}
+        if self.use_stage_classifier:
+            vl_attn_mask = backbone_output.get("backbone_attention_mask", None)
+            output["stage_logits"] = self._compute_stage_logits(vl_embs, vl_attn_mask)
+        return BatchFeature(data=output)
 
     @property
     def device(self):

@@ -134,6 +134,23 @@ class ArgsConfig:
     balance_trajectory_weights: bool = True
     """Used in LeRobotMixtureDataset. If True, sample trajectories within a dataset weighted by their length; otherwise, equal weighting."""
 
+    # Auxiliary stage classifier. Enabling this implies loading the `stage` column
+    # from the dataset and running the StageTransform in data configs that support it
+    # (e.g. gr00t_mask_config:UnitreeG1SimMaskDataConfig). When False, stage is skipped
+    # at both the data-loading and model-head levels.
+    use_stage_classifier: bool = False
+    """Enable the per-frame stage classification auxiliary head (and automatically load
+    the stage label in the dataloader)."""
+
+    num_stage_classes: int = 5
+    """Number of classes for the auxiliary stage classifier."""
+
+    stage_classifier_weight: float = 0.1
+    """Weight applied to the stage classification CE loss when added to the flow matching loss."""
+
+    stage_classifier_hidden: int = 512
+    """Hidden size of the stage classifier MLP."""
+
 
 #####################################################################################
 # Helper functions
@@ -198,6 +215,11 @@ def main(config: ArgsConfig):
 
     # 1.1 modality configs and transforms
     data_config_cls = load_data_config(config.data_config)
+    # Stage data-loading follows the classifier flag: enabling the classifier
+    # automatically turns on stage loading in configs that support it.
+    if hasattr(data_config_cls, "use_stage"):
+        data_config_cls.use_stage = config.use_stage_classifier
+        print(f"Data config `use_stage` set to {config.use_stage_classifier}")
     modality_configs = data_config_cls.modality_config()
     transforms = data_config_cls.transform()
 
@@ -268,8 +290,11 @@ def main(config: ArgsConfig):
     # Need to recreate action head with correct config since it was initialized with old config
     action_horizon_mismatch = data_action_horizon != model.action_head.config.action_horizon
     action_dim_mismatch = data_max_action_dim != model.action_head.config.action_dim
+    stage_classifier_needs_init = config.use_stage_classifier and not getattr(
+        model.action_head.config, "use_stage_classifier", False
+    )
 
-    if action_horizon_mismatch or action_dim_mismatch:
+    if action_horizon_mismatch or action_dim_mismatch or stage_classifier_needs_init:
         # Store old values for logging
         old_action_horizon = model.action_head.config.action_horizon
         old_action_dim = model.action_head.config.action_dim
@@ -285,6 +310,15 @@ def main(config: ArgsConfig):
         new_action_head_config = copy.deepcopy(model.action_head.config)
         new_action_head_config.action_horizon = data_action_horizon
         new_action_head_config.action_dim = data_max_action_dim
+        if config.use_stage_classifier:
+            new_action_head_config.use_stage_classifier = True
+            new_action_head_config.num_stage_classes = config.num_stage_classes
+            new_action_head_config.stage_classifier_weight = config.stage_classifier_weight
+            new_action_head_config.stage_classifier_hidden = config.stage_classifier_hidden
+            print(
+                f"Enabling stage classifier: num_classes={config.num_stage_classes}, "
+                f"weight={config.stage_classifier_weight}, hidden={config.stage_classifier_hidden}"
+            )
 
         # Import the FlowmatchingActionHead class
         from gr00t.model.action_head.flow_matching_action_head import (
@@ -323,6 +357,12 @@ def main(config: ArgsConfig):
         # Update the main model's action_dim for validation (critical for validate_inputs)
         model.config.action_dim = data_max_action_dim
         model.action_dim = data_max_action_dim
+
+        if config.use_stage_classifier:
+            model.config.action_head_cfg["use_stage_classifier"] = True
+            model.config.action_head_cfg["num_stage_classes"] = config.num_stage_classes
+            model.config.action_head_cfg["stage_classifier_weight"] = config.stage_classifier_weight
+            model.config.action_head_cfg["stage_classifier_hidden"] = config.stage_classifier_hidden
 
         # Set trainable parameters for the new action head
         model.action_head.set_trainable_parameters(

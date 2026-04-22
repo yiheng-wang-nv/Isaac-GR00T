@@ -322,6 +322,12 @@ class GR00TTransform(InvertibleModalityTransform):
             transformed_data["action"] = actions
             transformed_data["action_mask"] = actions_mask
 
+        # 4) Forward any per-frame stage label verbatim (optional auxiliary target).
+        for key in data.keys():
+            if isinstance(key, str) and key.startswith("stage."):
+                transformed_data["stage"] = np.asarray(data[key], dtype=np.int64)
+                break
+
         for k, v in vlm_outputs.items():
             assert k not in transformed_data, f"Key {k} already exists in transformed_data."
             transformed_data[k] = v

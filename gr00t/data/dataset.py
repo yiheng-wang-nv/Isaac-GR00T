@@ -893,6 +893,42 @@ class LeRobotSingleDataset(Dataset):
             task_indices.append(self.curr_traj_data[original_key][step_indices[i]].item())
         return self.tasks.loc[task_indices]["task"].tolist()
 
+    def get_stage(
+        self,
+        trajectory_id: int,
+        key: str,
+        base_index: int,
+    ) -> np.ndarray:
+        """Get the per-frame stage label as an int64 array of shape (T, 1)."""
+        assert key.startswith("stage."), f"Stage key must start with 'stage.', got {key}"
+        subkey = key.replace("stage.", "")
+        stage_meta = self.lerobot_modality_meta.stage
+        assert stage_meta is not None, "stage metadata is None"
+        assert subkey in stage_meta, (
+            f"Stage key {subkey} not found in metadata, available: {list(stage_meta.keys())}"
+        )
+        original_key = stage_meta[subkey].original_key
+        if original_key is None:
+            original_key = subkey
+
+        step_indices = self.delta_indices[key] + base_index
+        trajectory_index = self.get_trajectory_index(trajectory_id)
+        max_length = self.trajectory_lengths[trajectory_index]
+
+        assert self.curr_traj_data is not None, f"No data found for {trajectory_id=}"
+        assert (
+            original_key in self.curr_traj_data.columns
+        ), f"No {original_key} column found in trajectory {trajectory_id}"
+        data_array = self.curr_traj_data[original_key].to_numpy().astype(np.int64)
+        # Reshape to (T, 1) so retrieve_data_and_pad preserves the trailing dim
+        data_array = data_array.reshape(-1, 1)
+        return self.retrieve_data_and_pad(
+            array=data_array,
+            step_indices=step_indices,
+            max_length=max_length,
+            padding_strategy="first_last",
+        ).astype(np.int64)
+
     def get_data_by_modality(
         self,
         trajectory_id: int,
@@ -918,6 +954,8 @@ class LeRobotSingleDataset(Dataset):
             return self.get_state_or_action(trajectory_id, modality, key, base_index)
         elif modality == "language":
             return self.get_language(trajectory_id, key, base_index)
+        elif modality == "stage":
+            return self.get_stage(trajectory_id, key, base_index)
         else:
             raise ValueError(f"Invalid modality: {modality}")
 

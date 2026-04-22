@@ -640,18 +640,20 @@ class ChangeBackgroundTransform(ModalityTransform):
             self._cleanup_masks(data)
             return data
 
-        # Pick one random template for all views & frames (temporal + multi-view consistency)
-        tpl_path = self._template_images[_random.randint(0, len(self._template_images) - 1)]
-        tpl_bgr = cv2.imread(tpl_path)
-        if tpl_bgr is None:
-            self._cleanup_masks(data)
-            return data
-        tpl_rgb = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2RGB)
-
         for key in self.apply_to:
             mask_key = key.replace("video.", "mask.")
             if mask_key not in data:
                 continue
+
+            # Pick an independent random template per view (shared across the T
+            # frames of this view for temporal consistency within the clip).
+            tpl_path = self._template_images[
+                _random.randint(0, len(self._template_images) - 1)
+            ]
+            tpl_bgr = cv2.imread(tpl_path)
+            if tpl_bgr is None:
+                continue
+            tpl_rgb = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2RGB)
 
             video = data[key]       # (T, H, W, C) uint8
             masks = data[mask_key]  # (T, H, W) uint8

@@ -117,6 +117,10 @@ class LeRobotModalityMetadata(BaseModel):
         default=None,
         description="The metadata for the annotation modality. The keys are the new names of each annotation modality.",
     )
+    stage: Optional[dict[str, LeRobotModalityField]] = Field(
+        default=None,
+        description="The metadata for the stage modality. The keys are the new names of each stage modality.",
+    )
 
     def get_key_meta(self, key: str) -> LeRobotModalityField:
         """Get the metadata for a key in the LeRobot modality metadata.
@@ -163,6 +167,15 @@ class LeRobotModalityMetadata(BaseModel):
                     f"Key: {key}, annotation key {subkey} not found in metadata, available annotation keys: {self.annotation.keys()}"
                 )
             return self.annotation[subkey]
+        elif modality == "stage":
+            assert (
+                self.stage is not None
+            ), "Trying to get stage metadata for a dataset with no stage field"
+            if subkey not in self.stage:
+                raise ValueError(
+                    f"Key: {key}, stage key {subkey} not found in metadata, available stage keys: {self.stage.keys()}"
+                )
+            return self.stage[subkey]
         else:
             raise ValueError(f"Key: {key}, unexpected modality: {modality}")
 
