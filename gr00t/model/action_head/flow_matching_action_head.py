@@ -231,8 +231,9 @@ class FlowmatchingActionHead(nn.Module):
         if self.use_stage_classifier:
             hidden = getattr(config, "stage_classifier_hidden", 512)
             num_classes = getattr(config, "num_stage_classes", 5)
+            stage_input_dim = config.backbone_embedding_dim + config.max_state_dim
             self.stage_head = nn.Sequential(
-                nn.Linear(config.backbone_embedding_dim, hidden),
+                nn.Linear(stage_input_dim, hidden),
                 nn.GELU(),
                 nn.Linear(hidden, num_classes),
             )
@@ -377,7 +378,9 @@ class FlowmatchingActionHead(nn.Module):
 
         # Optional per-frame stage classifier.
         if self.use_stage_classifier and "stage" in action_input:
-            stage_logits = self._compute_stage_logits(vl_embs, vl_attn_mask)
+            stage_logits = self._compute_stage_logits_from_backbone(
+                backbone_output, action_input
+            )
             stage_target = action_input.stage.long().view(-1)
             stage_loss = F.cross_entropy(stage_logits, stage_target)
             with torch.no_grad():
@@ -390,15 +393,45 @@ class FlowmatchingActionHead(nn.Module):
 
         return BatchFeature(data=output_dict)
 
-    def _compute_stage_logits(
-        self, vl_embs: torch.Tensor, vl_attn_mask: torch.Tensor | None
+    def _compute_stage_logits_from_backbone(
+        self, backbone_output: BatchFeature, action_input: BatchFeature
     ) -> torch.Tensor:
-        """Mean-pool VL tokens (honoring the attention mask) and classify."""
-        if vl_attn_mask is None:
-            pooled = vl_embs.mean(dim=1)
+        """Compute stage logits from prompt-free vision features plus state."""
+        vision_features = backbone_output.get("backbone_vision_features", None)
+        vision_mask = backbone_output.get("backbone_vision_attention_mask", None)
+        if vision_features is None or vision_mask is None:
+            raise RuntimeError(
+                "The stage classifier requires "
+                "EagleBackbone(return_pure_vision_features=True)."
+            )
+        return self._compute_stage_logits(
+            vision_features,
+            vision_mask,
+            state=action_input.get("state", None),
+            state_mask=action_input.get("state_mask", None),
+        )
+
+    def _compute_stage_logits(
+        self,
+        features: torch.Tensor,
+        attention_mask: torch.Tensor | None,
+        state: torch.Tensor | None = None,
+        state_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Mean-pool pure vision tokens, concatenate state, and classify."""
+        if attention_mask is None:
+            pooled = features.mean(dim=1)
         else:
-            mask = vl_attn_mask.to(dtype=vl_embs.dtype).unsqueeze(-1)
-            pooled = (vl_embs * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+            mask = attention_mask.to(dtype=features.dtype).unsqueeze(-1)
+            pooled = (features * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+
+        if state is None:
+            raise RuntimeError("Stage classifier requires proprioceptive state.")
+        state_features = state[:, -1] if state.ndim == 3 else state
+        if state_mask is not None:
+            state_feature_mask = state_mask[:, -1] if state_mask.ndim == 3 else state_mask
+            state_features = state_features * state_feature_mask.to(dtype=state_features.dtype)
+        pooled = torch.cat([pooled, state_features.to(dtype=pooled.dtype)], dim=-1)
         return self.stage_head(pooled)
 
     @torch.no_grad()
@@ -459,8 +492,9 @@ class FlowmatchingActionHead(nn.Module):
             actions = actions + dt * pred_velocity
         output = {"action_pred": actions}
         if self.use_stage_classifier:
-            vl_attn_mask = backbone_output.get("backbone_attention_mask", None)
-            output["stage_logits"] = self._compute_stage_logits(vl_embs, vl_attn_mask)
+            output["stage_logits"] = self._compute_stage_logits_from_backbone(
+                backbone_output, action_input
+            )
         return BatchFeature(data=output)
 
     @property

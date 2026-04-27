@@ -285,6 +285,9 @@ def main(config: ArgsConfig):
         tune_projector=config.tune_projector,  # action head's projector
         tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
     )
+    if config.use_stage_classifier:
+        model.backbone.return_pure_vision_features = True
+        model.config.backbone_cfg["return_pure_vision_features"] = True
 
     # Update action_horizon and max_action_dim to match data config
     # Need to recreate action head with correct config since it was initialized with old config
@@ -294,7 +297,11 @@ def main(config: ArgsConfig):
         model.action_head.config, "use_stage_classifier", False
     )
 
-    if action_horizon_mismatch or action_dim_mismatch or stage_classifier_needs_init:
+    if (
+        action_horizon_mismatch
+        or action_dim_mismatch
+        or stage_classifier_needs_init
+    ):
         # Store old values for logging
         old_action_horizon = model.action_head.config.action_horizon
         old_action_dim = model.action_head.config.action_dim
@@ -317,7 +324,8 @@ def main(config: ArgsConfig):
             new_action_head_config.stage_classifier_hidden = config.stage_classifier_hidden
             print(
                 f"Enabling stage classifier: num_classes={config.num_stage_classes}, "
-                f"weight={config.stage_classifier_weight}, hidden={config.stage_classifier_hidden}"
+                f"weight={config.stage_classifier_weight}, hidden={config.stage_classifier_hidden}, "
+                "feature_source=vision_state"
             )
 
         # Import the FlowmatchingActionHead class
@@ -331,7 +339,18 @@ def main(config: ArgsConfig):
         # Copy the weights from the old action head to the new one
         if not action_dim_mismatch:
             print("Copying weights from old action head (compatible dimensions)")
-            new_action_head.load_state_dict(model.action_head.state_dict(), strict=False)
+            old_state_dict = model.action_head.state_dict()
+            new_state_dict = new_action_head.state_dict()
+            compatible_state_dict = {
+                key: value
+                for key, value in old_state_dict.items()
+                if key in new_state_dict
+                and new_state_dict[key].shape == value.shape
+            }
+            skipped_keys = sorted(set(old_state_dict) - set(compatible_state_dict))
+            if skipped_keys:
+                print(f"Skipped {len(skipped_keys)} incompatible action-head weights.")
+            new_action_head.load_state_dict(compatible_state_dict, strict=False)
         else:
             print(
                 f"Partial weight copy: copying first {old_action_dim} dimensions, initializing last {data_max_action_dim - old_action_dim} dimensions randomly"
