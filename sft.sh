@@ -30,18 +30,19 @@ torchrun --standalone --nproc_per_node=2 --nnodes=1 scripts/gr00t_finetune.py \
   --save-steps 10000 \
   --tune_visual
 
-# split data base model
-CUDA_VISIBLE_DEVICES=2,3,4,5 IS_TORCHRUN=1 \
+# split data + prompt-free stage classifier
+CUDA_VISIBLE_DEVICES=4,5,6,7 IS_TORCHRUN=1 \
 torchrun --standalone --nproc_per_node=4 --nnodes=1 scripts/gr00t_finetune.py \
   --dataset-path /localhome/local-vennw/data/trocar_parallel_combined_split \
   --num-gpus 4 \
   --batch-size 64 \
-  --output-dir sft_2gpu_256bs_80ksteps_split_tasks \
+  --output-dir sft_4gpu_256bs_50ksteps_split_stage_prompt_free \
   --data-config gr00t_config:UnitreeG1SimDataConfig \
   --video_backend decord \
   --report_to tensorboard \
-  --max_steps 80000 \
-  --save-steps 10000
+  --max_steps 50000 \
+  --save-steps 25000 \
+  --use-stage-classifier
 
 # full data + background augmentation (success dataset, no stage column → disable stage)
 # Templates pulled from HealthSurgiBench_1e4/media via DEFAULT_TEMPLATE_FOLDER in gr00t_mask_config.py
@@ -86,26 +87,27 @@ torchrun --standalone --nproc_per_node=4 --nnodes=1 scripts/gr00t_finetune.py \
   --use-stage-classifier
 
 # eval: SFT model, 100 episodes, 512 steps, no mask
+conda activate isaaclab_develop_6.0
 CUDA_VISIBLE_DEVICES=1 python /localhome/local-vennw/code/IsaacLab/scripts/tools/record_trocar_episodes.py \
   --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_2gpu_256bs_50ksteps/checkpoint-50000 \
-  --output_dir /localhome/local-vennw/code/sft_eval_100_1_steps \
-  --num_episodes 100 \
-  --max_steps 512 \
-  --use_gr00t_policy \
-  --open_loop_steps 1 \
-  --fixed_initial_state_dataset /localhome/local-vennw/code/orca_trocar_data/assemble_trocar_sim_box_v3_60 \
-  --fixed_initial_state_episode 0 \
-  --fixed_initial_state_frame 0 \
-  --fixed_initial_state_steps 30 \
-  --fixed_initial_state_tolerance 0.035
-
-CUDA_VISIBLE_DEVICES=2 python /localhome/local-vennw/code/IsaacLab/scripts/tools/record_trocar_episodes.py \
-  --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_2gpu_256bs_50ksteps/checkpoint-50000 \
-  --output_dir /localhome/local-vennw/code/sft_eval_100_8_steps \
+  --output_dir /localhome/local-vennw/code/sft_eval_100_8_steps_rand_light \
   --num_episodes 100 \
   --max_steps 512 \
   --use_gr00t_policy \
   --open_loop_steps 8 \
+  --fixed_initial_state_dataset /localhome/local-vennw/code/orca_trocar_data/assemble_trocar_sim_box_v3_60 \
+  --fixed_initial_state_episode 0 \
+  --fixed_initial_state_frame 0 \
+  --fixed_initial_state_steps 30 \
+  --fixed_initial_state_tolerance 0.035 --randomize_lighting --seed 42
+
+CUDA_VISIBLE_DEVICES=3 python /localhome/local-vennw/code/IsaacLab/scripts/tools/record_trocar_episodes.py \
+  --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_2gpu_256bs_50ksteps/checkpoint-50000 \
+  --output_dir /localhome/local-vennw/code/sft_eval_100_4_steps \
+  --num_episodes 100 \
+  --max_steps 512 \
+  --use_gr00t_policy \
+  --open_loop_steps 4 \
   --fixed_initial_state_dataset /localhome/local-vennw/code/orca_trocar_data/assemble_trocar_sim_box_v3_60 \
   --fixed_initial_state_episode 0 \
   --fixed_initial_state_frame 0 \
