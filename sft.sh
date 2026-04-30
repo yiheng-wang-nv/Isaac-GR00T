@@ -136,25 +136,51 @@ CUDA_VISIBLE_DEVICES=6 python /localhome/local-vennw/code/IsaacLab/scripts/tools
   --no_mask
 
 # check multi-stage
-cd /localhome/local-vennw/code/IsaacLab
-conda activate isaaclab_develop_6.0
 DISPLAY=:1 XAUTHORITY=$HOME/.Xauthority \
   ./isaaclab.sh -p scripts/tools/interactive_trocar_multitask.py \
-    --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_2gpu_256bs_80ksteps_split_stage/checkpoint-80000 \
+    --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_4gpu_256bs_50ksteps_split_stage_prompt_free/checkpoint-50000 \
     --device cuda:0 \
-    --viz kit
-
+    --viz kit \
+    --open_loop_steps 4 \
+    --fixed_initial_state_dataset /localhome/local-vennw/code/orca_trocar_data/assemble_trocar_sim_box_v3_60 \
+    --fixed_initial_state_episode 0 \
+    --fixed_initial_state_frame 0 \
+    --fixed_initial_state_steps 30 \
+    --fixed_initial_state_tolerance 0.035 --stage_pred_min_confidence 0.9 --retry_return_steps 10 --step_hz 10 --tray_yaw_increment_deg 5
 # check demo
 cd /localhome/local-vennw/code/IsaacLab
 conda activate isaaclab_develop_6.0
 CUDA_VISIBLE_DEVICES=1 ./isaaclab.sh -p scripts/tools/headless_trocar_stage_retry_demo.py \
-  --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_2gpu_256bs_80ksteps_split_stage/checkpoint-80000 \
-  --output_dir trocar_stage_retry_demo \
-  --task_max_steps 60 \
-  --task3_max_retries 3 \
-  --task4_max_steps 60 \
-  --task4_max_retries 3 \
-  --back_to_init_steps 60 \
-  --back_to_init_tolerance 0.035 \
-  --num_episodes 5 \
-  --fps 30
+  --model_path /localhome/local-vennw/code/cosmos_gr00t/Isaac-GR00T/sft_4gpu_256bs_50ksteps_split_stage_prompt_free/checkpoint-50000 \
+  --output_dir trocar_stage_retry_demo_prompt_free \
+  --task1_max_steps 60 \
+  --task2_max_steps 60 \
+  --task_max_retries 3 \
+  --perturb_tray_task 2 \
+  --perturb_tray_after_steps 5 \
+  --perturb_tray_duration_steps 5 \
+  --initial_tray_yaw_deg 5 \
+  --perturb_tray_yaw_deg 10 \
+  --num_episodes 1 \
+  --open_loop_steps 1 \
+  --fps 15 \
+  --fixed_initial_state_dataset /localhome/local-vennw/code/orca_trocar_data/assemble_trocar_sim_box_v3_60 \
+  --fixed_initial_state_episode 0 \
+  --fixed_initial_state_frame 0 \
+  --fixed_initial_state_steps 30 \
+  --fixed_initial_state_tolerance 0.035
+
+
+  # involve cosmos
+cd /localhome/local-vennw/code/cosmos-reason2
+CUDA_VISIBLE_DEVICES=6 .venv/bin/vllm serve nvidia/Cosmos-Reason2-2B \
+  --allowed-local-media-path /tmp/cosmos_reason2_queries \
+  --max-model-len 8192 \
+  --reasoning-parser qwen3 \
+  --port 10086
+
+# test cosmos
+
+cd /localhome/local-vennw/code/IsaacLab
+/localhome/local-vennw/miniconda3/envs/isaaclab_develop_6.0/bin/python \
+  reason2_retry_hand_samples/eval_reason2_online.py --port 10086
