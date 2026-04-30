@@ -178,11 +178,8 @@ class Gr00tPolicy(BasePolicy):
                 obs_copy[k] = np.array(v)
 
         normalized_input = self.apply_transforms(obs_copy)
-        normalized_action, stage_logits = self._get_action_from_normalized_input(normalized_input)
+        normalized_action = self._get_action_from_normalized_input(normalized_input)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
-        if stage_logits is not None:
-            unnormalized_action["stage_logits"] = stage_logits.cpu()
-            unnormalized_action["stage_pred"] = stage_logits.argmax(dim=-1).cpu()
 
         if not is_batch:
             unnormalized_action = squeeze_dict_values(unnormalized_action)
@@ -190,16 +187,12 @@ class Gr00tPolicy(BasePolicy):
 
     def _get_action_from_normalized_input(
         self, normalized_input: Dict[str, Any]
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    ) -> torch.Tensor:
         # Set up autocast context if needed
         with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=COMPUTE_DTYPE):
             model_pred = self.model.get_action(normalized_input)
 
-        normalized_action = model_pred["action_pred"].float()
-        stage_logits = model_pred.get("stage_logits", None)
-        if stage_logits is not None:
-            stage_logits = stage_logits.float()
-        return normalized_action, stage_logits
+        return model_pred["action_pred"].float()
 
     def _get_unnormalized_action(self, normalized_action: torch.Tensor) -> Dict[str, Any]:
         return self.unapply_transforms({"action": normalized_action.cpu()})

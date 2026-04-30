@@ -24,7 +24,6 @@ We replace background + ground (0, 1); robot / trocars / tray / cart / trolley s
 from gr00t.data.dataset import ModalityConfig
 from gr00t.data.transform.base import ComposedModalityTransform
 from gr00t.data.transform.concat import ConcatTransform
-from gr00t.data.transform.stage import StageTransform
 from gr00t.data.transform.state_action import StateActionSinCosTransform, StateActionToTensor, StateActionTransform
 from gr00t.data.transform.video import (
     ChangeBackgroundTransform,
@@ -52,7 +51,6 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
     state_keys = ["state.left_arm", "state.right_arm", "state.left_hand", "state.right_hand"]
     action_keys = ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand"]
     language_keys = ["annotation.human.task_description"]
-    stage_keys = ["stage.current_stage"]
     observation_indices = [0]
     action_indices = list(range(16))
 
@@ -61,11 +59,6 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
     bg_mask_values: list[int] = BACKGROUND_MASK_VALUES
     bg_change_prob: float = 0.9
     bg_feather_radius: int = 3
-
-    # When False, the `stage` column is skipped entirely (no ModalityConfig entry,
-    # no StageTransform, no `stage` tensor in the batch). Required to be True for
-    # the auxiliary stage classifier head.
-    use_stage: bool = True
 
     def modality_config(self) -> dict[str, ModalityConfig]:
         video_modality = ModalityConfig(
@@ -85,18 +78,12 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
             modality_keys=self.language_keys,
         )
 
-        configs = {
+        return {
             "video": video_modality,
             "state": state_modality,
             "action": action_modality,
             "language": language_modality,
         }
-        if self.use_stage:
-            configs["stage"] = ModalityConfig(
-                delta_indices=self.observation_indices,
-                modality_keys=self.stage_keys,
-            )
-        return configs
 
     def transform(self):
         transforms = [
@@ -129,11 +116,6 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
                 apply_to=self.action_keys,
                 normalization_modes={key: "min_max" for key in self.action_keys},
             ),
-        ]
-        if self.use_stage:
-            # stage label: merge rare stage 5 (trailing frame of `place trocar`) into 4
-            transforms.append(StageTransform(apply_to=self.stage_keys, merge_map={5: 4}))
-        transforms += [
             # concat transforms
             ConcatTransform(
                 video_concat_order=self.video_keys,
@@ -152,3 +134,10 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
 
 
 DATA_CONFIG_MAP["unitree_g1_sim_mask"] = UnitreeG1SimMaskDataConfig()
+
+
+class UnitreeG1SimMaskTaskCompleteDataConfig(UnitreeG1SimMaskDataConfig):
+    action_keys = [*UnitreeG1SimMaskDataConfig.action_keys, "action.task_complete"]
+
+
+DATA_CONFIG_MAP["unitree_g1_sim_mask_task_complete"] = UnitreeG1SimMaskTaskCompleteDataConfig()

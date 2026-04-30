@@ -79,9 +79,9 @@ class DualBrainTrainer(transformers.Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         outputs = model(inputs)
         loss = outputs["loss"]
-        # Log auxiliary scalars (e.g. stage classifier metrics) when present.
+        # Log auxiliary scalars when present.
         aux_logs: dict[str, float] = {}
-        for key in ("flow_matching_loss", "stage_loss", "stage_acc"):
+        for key in ("flow_matching_loss",):
             if key in outputs:
                 value = outputs[key]
                 if isinstance(value, torch.Tensor):

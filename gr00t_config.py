@@ -16,7 +16,6 @@
 from gr00t.data.dataset import ModalityConfig
 from gr00t.data.transform.base import ComposedModalityTransform
 from gr00t.data.transform.concat import ConcatTransform
-from gr00t.data.transform.stage import StageTransform
 from gr00t.data.transform.state_action import StateActionSinCosTransform, StateActionToTensor, StateActionTransform
 from gr00t.data.transform.video import VideoColorJitter, VideoCrop, VideoResize, VideoToNumpy, VideoToTensor
 from gr00t.experiment.data_config import DATA_CONFIG_MAP, BaseDataConfig
@@ -28,7 +27,6 @@ class UnitreeG1SimDataConfig(BaseDataConfig):
     state_keys = ["state.left_arm", "state.right_arm", "state.left_hand", "state.right_hand"]
     action_keys = ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand"]
     language_keys = ["annotation.human.task_description"]
-    stage_keys = ["stage.current_stage"]
     observation_indices = [0]
     action_indices = list(range(16))
 
@@ -53,17 +51,11 @@ class UnitreeG1SimDataConfig(BaseDataConfig):
             modality_keys=self.language_keys,
         )
 
-        stage_modality = ModalityConfig(
-            delta_indices=self.observation_indices,
-            modality_keys=self.stage_keys,
-        )
-
         modality_configs = {
             "video": video_modality,
             "state": state_modality,
             "action": action_modality,
             "language": language_modality,
-            "stage": stage_modality,
         }
 
         return modality_configs
@@ -91,8 +83,6 @@ class UnitreeG1SimDataConfig(BaseDataConfig):
                 apply_to=self.action_keys,
                 normalization_modes={key: "min_max" for key in self.action_keys},
             ),
-            # stage label: merge rare stage 5 (trailing frame of `place trocar`) into 4
-            StageTransform(apply_to=self.stage_keys, merge_map={5: 4}),
             # concat transforms
             ConcatTransform(
                 video_concat_order=self.video_keys,
@@ -111,6 +101,13 @@ class UnitreeG1SimDataConfig(BaseDataConfig):
 
 
 DATA_CONFIG_MAP["unitree_g1_sim"] = UnitreeG1SimDataConfig()
+
+
+class UnitreeG1SimTaskCompleteDataConfig(UnitreeG1SimDataConfig):
+    action_keys = [*UnitreeG1SimDataConfig.action_keys, "action.task_complete"]
+
+
+DATA_CONFIG_MAP["unitree_g1_sim_task_complete"] = UnitreeG1SimTaskCompleteDataConfig()
 
 
 class UnitreeG1SimNoStageDataConfig(BaseDataConfig):
@@ -196,7 +193,7 @@ DATA_CONFIG_MAP["unitree_g1_sim_no_stage"] = UnitreeG1SimNoStageDataConfig()
 
 
 class UnitreeG1SimInferDataConfig(BaseDataConfig):
-    """Inference-only variant of UnitreeG1SimDataConfig — no stage key or StageTransform."""
+    """Inference-only variant of UnitreeG1SimDataConfig."""
 
     video_keys = ["video.left_wrist_view", "video.right_wrist_view", "video.room_view"]
     state_keys = ["state.left_arm", "state.right_arm", "state.left_hand", "state.right_hand"]
@@ -243,3 +240,10 @@ class UnitreeG1SimInferDataConfig(BaseDataConfig):
 
 
 DATA_CONFIG_MAP["unitree_g1_sim_infer"] = UnitreeG1SimInferDataConfig()
+
+
+class UnitreeG1SimTaskCompleteInferDataConfig(UnitreeG1SimInferDataConfig):
+    action_keys = [*UnitreeG1SimInferDataConfig.action_keys, "action.task_complete"]
+
+
+DATA_CONFIG_MAP["unitree_g1_sim_task_complete_infer"] = UnitreeG1SimTaskCompleteInferDataConfig()
