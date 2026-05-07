@@ -18,7 +18,8 @@
 Mask pixel values (per category_mapping.json):
     0 = background, 1 = ground, 2 = robot, 3 = trocar_1, 4 = trocar_2,
     5 = tray, 6 = cart, 7 = instrument_trolley
-We replace background + ground (0, 1); robot / trocars / tray / cart / trolley stay.
+We always replace background/ground regions (0, 1), and optionally replace cart/trolley (6, 7).
+Robot / trocars / tray stay.
 """
 
 from gr00t.data.dataset import ModalityConfig
@@ -42,8 +43,10 @@ from gr00t.model.transforms import GR00TTransform
 DEFAULT_TEMPLATE_FOLDER = "/localhome/local-vennw/code/cosmos_gr00t/HealthSurgiBench_1e4/media"
 
 # Category IDs in the masks.npz files that should be treated as background and replaced.
-# Keep foreground categories (robot, trocars, tray, cart, instrument_trolley) untouched.
+# Keep foreground categories (robot, trocars, tray) untouched.
 BACKGROUND_MASK_VALUES = [0, 1]
+OPTIONAL_BACKGROUND_MASK_VALUES = [6, 7]
+OPTIONAL_BACKGROUND_MASK_PROB = 0.5
 
 
 class UnitreeG1SimMaskDataConfig(BaseDataConfig):
@@ -57,6 +60,8 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
     # Background-swap hyperparameters (override per-instance after construction if needed).
     template_folder: str = DEFAULT_TEMPLATE_FOLDER
     bg_mask_values: list[int] = BACKGROUND_MASK_VALUES
+    bg_optional_mask_values: list[int] = OPTIONAL_BACKGROUND_MASK_VALUES
+    bg_optional_mask_prob: float = OPTIONAL_BACKGROUND_MASK_PROB
     bg_change_prob: float = 0.9
     bg_feather_radius: int = 3
 
@@ -92,6 +97,8 @@ class UnitreeG1SimMaskDataConfig(BaseDataConfig):
                 apply_to=self.video_keys,
                 template_folder=self.template_folder,
                 target_mask_values=self.bg_mask_values,
+                optional_target_mask_values=self.bg_optional_mask_values,
+                optional_target_mask_prob=self.bg_optional_mask_prob,
                 p=self.bg_change_prob,
                 feather_radius=self.bg_feather_radius,
             ),

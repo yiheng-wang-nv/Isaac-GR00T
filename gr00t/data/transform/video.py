@@ -604,13 +604,19 @@ class ChangeBackgroundTransform(ModalityTransform):
         template_folder: Path to a directory of background images (``.jpg`` / ``.png``).
             Use ``extract_template_frames.py`` (from upstream) to pre-extract frames
             from a template video.
-        target_mask_values: Mask pixel values that indicate background (default ``[0]``).
+        target_mask_values: Mask pixel values that always indicate background
+            when the transform is applied.
+        optional_target_mask_values: Additional mask pixel values that indicate background
+            with :attr:`optional_target_mask_prob` when the transform is applied.
+        optional_target_mask_prob: Probability of including :attr:`optional_target_mask_values`.
         p: Probability of applying the transform per sample.
         feather_radius: Gaussian-blur radius for soft mask edges (0 = hard cut).
     """
 
     template_folder: str = Field(..., description="Directory containing background template images")
     target_mask_values: list[int] = Field(default_factory=lambda: [0])
+    optional_target_mask_values: list[int] = Field(default_factory=list)
+    optional_target_mask_prob: float = Field(default=0.0, ge=0.0, le=1.0)
     p: float = Field(default=0.5, ge=0.0, le=1.0)
     feather_radius: int = Field(default=3, ge=0)
 
@@ -640,6 +646,10 @@ class ChangeBackgroundTransform(ModalityTransform):
             self._cleanup_masks(data)
             return data
 
+        active_mask_values = list(self.target_mask_values)
+        if self.optional_target_mask_values and _random.random() < self.optional_target_mask_prob:
+            active_mask_values.extend(self.optional_target_mask_values)
+
         for key in self.apply_to:
             mask_key = key.replace("video.", "mask.")
             if mask_key not in data:
@@ -666,7 +676,7 @@ class ChangeBackgroundTransform(ModalityTransform):
                 frame = video[t]
                 mask = masks[t]
 
-                bg = np.isin(mask, self.target_mask_values)
+                bg = np.isin(mask, active_mask_values)
                 if not bg.any():
                     continue
 

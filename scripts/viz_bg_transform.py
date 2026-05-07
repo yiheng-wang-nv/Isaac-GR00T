@@ -105,6 +105,8 @@ def main() -> None:
     print(
         f"Pulled transform from {args.data_config}: "
         f"apply_to={bg_transform.apply_to} targets={bg_transform.target_mask_values} "
+        f"optional_targets={bg_transform.optional_target_mask_values} "
+        f"optional_p={bg_transform.optional_target_mask_prob} "
         f"p={orig_p}->{bg_transform.p} feather={bg_transform.feather_radius} "
         f"templates={len(bg_transform._template_images)}"
     )
