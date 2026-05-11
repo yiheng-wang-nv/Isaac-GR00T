@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import torch
+import torch.nn as nn
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 
@@ -30,6 +31,35 @@ from gr00t.data.transform.base import ComposedModalityTransform
 from gr00t.model.gr00t_n1 import GR00T_N1_5
 
 COMPUTE_DTYPE = torch.bfloat16
+
+DEFAULT_PROGRESS_TASK_DESCRIPTIONS = [
+    "left hand pick up trocar",
+    "right hand pick up trocar",
+    "align trocars",
+    "install trocar",
+    "place trocar",
+]
+
+
+class TaskProgressRegressor(nn.Module):
+    """Small MLP head trained on pooled GR00T backbone features."""
+
+    def __init__(self, input_dim: int, hidden_dim: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(self.net(x).squeeze(-1))
 
 
 class BasePolicy(ABC):
@@ -70,6 +100,9 @@ class Gr00tPolicy(BasePolicy):
         modality_transform: ComposedModalityTransform,
         denoising_steps: Optional[int] = None,
         device: Union[int, str] = "cuda" if torch.cuda.is_available() else "cpu",
+        progress_regressor_path: Optional[str] = None,
+        progress_task_descriptions: Optional[list[str]] = None,
+        progress_task_key: str = "annotation.human.task_description",
     ):
         """
         Initialize the Gr00tPolicy.
@@ -81,6 +114,9 @@ class Gr00tPolicy(BasePolicy):
             embodiment_tag (Union[str, EmbodimentTag]): The embodiment tag for the model.
             denoising_steps: Number of denoising steps to use for the action head.
             device (Union[int, str]): Device to run the model on.
+            progress_regressor_path: Optional checkpoint for an external task-progress head.
+            progress_task_descriptions: Prompt strings mapped to progress-head task indices.
+            progress_task_key: Observation key containing the task prompt.
         """
         try:
             # NOTE(YL) this returns the local path to the model which is normally
@@ -97,6 +133,12 @@ class Gr00tPolicy(BasePolicy):
         self._modality_transform.eval()  # set this to eval mode
         self.model_path = Path(model_path)
         self.device = device
+        self.progress_task_key = progress_task_key
+        self.progress_task_descriptions = progress_task_descriptions or DEFAULT_PROGRESS_TASK_DESCRIPTIONS
+        self._progress_regressor = None
+        self._progress_feat_dim = None
+        self._progress_n_tasks = None
+        self._latest_backbone_features = None
 
         # Convert string embodiment tag to EmbodimentTag enum if needed
         if isinstance(embodiment_tag, str):
@@ -117,6 +159,9 @@ class Gr00tPolicy(BasePolicy):
             ):
                 self.model.action_head.num_inference_timesteps = denoising_steps
                 print(f"Set action denoising steps to {denoising_steps}")
+
+        if progress_regressor_path is not None:
+            self._load_progress_regressor(progress_regressor_path)
 
     def apply_transforms(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -178,11 +223,15 @@ class Gr00tPolicy(BasePolicy):
                 obs_copy[k] = np.array(v)
 
         normalized_input = self.apply_transforms(obs_copy)
+        progress_task_indices = self._infer_progress_task_indices(obs_copy)
         normalized_action = self._get_action_from_normalized_input(normalized_input)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
 
         if not is_batch:
             unnormalized_action = squeeze_dict_values(unnormalized_action)
+        progress = self._predict_task_progress(progress_task_indices)
+        if progress is not None:
+            unnormalized_action["action.task_progress"] = progress if is_batch else float(progress[0])
         return unnormalized_action
 
     def _get_action_from_normalized_input(
@@ -230,6 +279,68 @@ class Gr00tPolicy(BasePolicy):
     def denoising_steps(self, value: int):
         """Set the number of denoising steps."""
         self.model.action_head.num_inference_timesteps = value
+
+    def _load_progress_regressor(self, progress_regressor_path: str):
+        ckpt = torch.load(Path(progress_regressor_path).expanduser(), map_location=self.device)
+        self._progress_feat_dim = int(ckpt["feat_dim"])
+        self._progress_n_tasks = int(ckpt["n_tasks"])
+        self._progress_regressor = TaskProgressRegressor(
+            input_dim=int(ckpt["input_dim"]),
+            hidden_dim=int(ckpt["hidden_dim"]),
+        ).to(self.device)
+        self._progress_regressor.load_state_dict(ckpt["model_state"])
+        self._progress_regressor.eval()
+        self.model.backbone.register_forward_hook(self._progress_backbone_hook)
+        if len(self.progress_task_descriptions) != self._progress_n_tasks:
+            print(
+                "Progress head task description count does not match checkpoint "
+                f"({len(self.progress_task_descriptions)} vs {self._progress_n_tasks})."
+            )
+        print(f"Loaded task-progress regressor from {progress_regressor_path}")
+
+    def _progress_backbone_hook(self, module, input, output):
+        self._latest_backbone_features = output["backbone_features"].detach().float()
+
+    def _infer_progress_task_indices(self, obs: Dict[str, Any]) -> list[int] | None:
+        if self._progress_regressor is None:
+            return None
+        if self.progress_task_key not in obs:
+            return None
+
+        prompt_to_idx = {
+            str(prompt).strip().lower(): idx for idx, prompt in enumerate(self.progress_task_descriptions)
+        }
+        values = np.asarray(obs[self.progress_task_key], dtype=object)
+        if values.ndim == 0:
+            prompts = [values.item()]
+        else:
+            prompts = [row[0] for row in values.reshape(values.shape[0], -1)]
+
+        task_indices: list[int] = []
+        for prompt in prompts:
+            key = str(prompt).strip().lower()
+            if key not in prompt_to_idx:
+                return None
+            task_indices.append(prompt_to_idx[key])
+        return task_indices
+
+    def _predict_task_progress(self, task_indices: list[int] | None) -> np.ndarray | None:
+        if self._progress_regressor is None or task_indices is None or self._latest_backbone_features is None:
+            return None
+        feat = self._latest_backbone_features.mean(dim=1).to(self.device)
+        if self._progress_feat_dim is not None and feat.shape[-1] != self._progress_feat_dim:
+            raise RuntimeError(f"Expected progress feature dim {self._progress_feat_dim}, got {feat.shape[-1]}.")
+        if len(task_indices) != feat.shape[0]:
+            raise RuntimeError(f"Got {len(task_indices)} task prompts for batch size {feat.shape[0]}.")
+        if self._progress_n_tasks is None:
+            return None
+
+        task_onehot = torch.zeros((feat.shape[0], self._progress_n_tasks), dtype=torch.float32, device=self.device)
+        task_onehot[torch.arange(feat.shape[0], device=self.device), torch.tensor(task_indices, device=self.device)] = 1.0
+        model_input = torch.cat([feat, task_onehot], dim=-1)
+        with torch.inference_mode():
+            progress = self._progress_regressor(model_input).detach().float().cpu().numpy()
+        return progress
 
     def _check_state_is_batched(self, obs: Dict[str, Any]) -> bool:
         for k, v in obs.items():
